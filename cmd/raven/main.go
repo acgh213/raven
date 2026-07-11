@@ -90,20 +90,12 @@ func main() {
 
 	// Run a periodic worker-drain loop under the signal-cancelled context.
 	// Worker.Run drains all eligible jobs and returns. We loop with a poll
-	// interval so new jobs are picked up promptly.
+	// interval so new jobs are picked up promptly. DrainLoop uses a
+	// context-aware select so cancellation during the wait is prompt.
 	slog.Info("starting worker drain loop")
-	pollInterval := 5 * time.Second
-	for {
-		worker.Run(runCtx)
-		select {
-		case <-runCtx.Done():
-			slog.Info("worker loop stopped")
-		default:
-			time.Sleep(pollInterval)
-			continue
-		}
-		break
-	}
+	// Keep the production interval at 5 seconds; tests inject a shorter one.
+	jobs.DrainLoop(runCtx, worker.Run, 5*time.Second)
+	slog.Info("worker loop stopped")
 
 	// Graceful HTTP shutdown.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.RequestTimeout)
