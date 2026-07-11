@@ -116,9 +116,12 @@ CREATE INDEX IF NOT EXISTS idx_jobs_scheduled_status
     ON jobs(status, scheduled_at)
     WHERE status IN ('pending', 'failed');
 
-CREATE INDEX IF NOT EXISTS idx_jobs_dedupe_key
+-- Enforce idempotent dedupe: only one active job (pending or claimed) per non-null dedupe_key.
+-- Once a job is completed, failed, or dead, the same dedupe_key may be reused.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_active_dedupe
     ON jobs(dedupe_key)
-    WHERE dedupe_key IS NOT NULL;
+    WHERE dedupe_key IS NOT NULL
+      AND status IN ('pending', 'claimed');
 
 CREATE INDEX IF NOT EXISTS idx_jobs_kind_status
     ON jobs(kind, status);
