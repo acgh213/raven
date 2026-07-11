@@ -1,11 +1,6 @@
 -- 001_core.sql: Phase 1 foundation tables.
 -- See DESIGN.md for the schema contracts.
-
-CREATE TABLE IF NOT EXISTS _migrations (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    filename    TEXT    NOT NULL UNIQUE,
-    applied_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
+-- Note: _migrations ledger is created by Migrate before this file runs.
 
 CREATE TABLE IF NOT EXISTS feeds (
     id                   TEXT PRIMARY KEY,
@@ -38,7 +33,9 @@ CREATE TABLE IF NOT EXISTS articles (
     is_deleted               INTEGER NOT NULL DEFAULT 0 CHECK (is_deleted IN (0, 1)),
     created_at               TEXT NOT NULL,
     updated_at               TEXT NOT NULL,
-    UNIQUE(feed_id, guid)
+    UNIQUE(feed_id, guid),
+    FOREIGN KEY (latest_content_version_id) REFERENCES article_content_versions(id)
+        DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE INDEX IF NOT EXISTS idx_articles_feed_id

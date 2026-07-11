@@ -25,12 +25,20 @@ const defaultBusyTimeout = 5 * time.Second
 
 // Open opens a SQLite database at path, enables foreign keys, sets a busy
 // timeout, configures WAL journal mode for file-backed databases, and
-// validates the connection.
+// validates the connection. The connection pool is limited to a single
+// connection (MaxOpenConns=1, MaxIdleConns=1) to guarantee that
+// connection-scoped PRAGMAs remain active for every operation and to
+// prevent unbounded connection growth.
 func Open(path string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open %q: %w", path, err)
 	}
+
+	// Limit the pool to one persistent connection so that connection-scoped
+	// PRAGMAs (foreign_keys, busy_timeout) apply to every operation.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	// Foreign keys must be enabled on every connection.
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
@@ -153,15 +161,13 @@ func Migrate(ctx context.Context, database *sql.DB) error {
 
 // Backup creates a consistent SQLite online backup at destination. It uses
 // SQLite's VACUUM INTO, which creates a transactionally consistent copy of
-// the database. Backup refuses to overwrite an existing nonempty destination.
+// the database. Backup refuses to overwrite an existing destination,
+// including an empty file, to prevent accidental data loss.
 func Backup(ctx context.Context, database *sql.DB, destination string) error {
-	// Refuse to overwrite a nonempty destination.
-	info, err := os.Stat(destination)
+	// Refuse to overwrite any existing destination, including an empty file.
+	_, err := os.Stat(destination)
 	if err == nil {
-		if info.Size() > 0 {
-			return fmt.Errorf("destination %q already exists and is nonempty", destination)
-		}
-		// File exists but is empty — that's acceptable; we'll overwrite.
+		return fmt.Errorf("destination %q already exists", destination)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("stat destination %q: %w", destination, err)
 	}
