@@ -1,0 +1,22 @@
+# binaries and local service data
+/raven
+*.db
+*.db-shm
+*.db-wal
+/data/
+/backups/
+
+# local config and secrets
+.env
+config.local.yaml
+
+# Android/Gradle
+.gradle/
+**/build/
+local.properties
+*.iml
+
+# editor / OS
+.idea/
+.vscode/
+.DS_Store
