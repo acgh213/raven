@@ -12,15 +12,21 @@ import (
 // handlers. It applies middleware for request-ID injection.
 func New() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", handleHealthz)
+	mux.HandleFunc("/healthz", handleHealthz)
 
 	var h http.Handler = mux
 	h = withRequestID(h)
 	return h
 }
 
-// handleHealthz responds with a 200 OK JSON status.
+// handleHealthz responds with a 200 OK JSON status for GET requests only.
+// All other methods receive 404 to avoid Go ServeMux's implicit HEAD handling
+// and 405 responses for method-pattern patterns.
 func handleHealthz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.NotFound(w, r)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, `{"status":"ok"}`)

@@ -91,18 +91,22 @@ func TestHealthzGETOnly(t *testing.T) {
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 
-	// Go's ServeMux serves HEAD via the GET handler automatically.
-	// Test only methods that should fail.
-	for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
+	// All non-GET methods at /healthz must return 404 with a non-empty request ID.
+	// Notably, HEAD is not implicitly served by the GET handler.
+	for _, method := range []string{"HEAD", "POST", "PUT", "PATCH", "DELETE"} {
 		req, _ := http.NewRequest(method, ts.URL+"/healthz", nil)
 		resp, err := ts.Client().Do(req)
 		if err != nil {
 			t.Fatalf("%s /healthz: %v", method, err)
 		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
-			t.Errorf("%s /healthz status = %d, want 404 or 405", method, resp.StatusCode)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s /healthz status = %d, want %d", method, resp.StatusCode, http.StatusNotFound)
 		}
+		rid := resp.Header.Get("X-Request-ID")
+		if rid == "" {
+			t.Errorf("%s /healthz: X-Request-ID header is empty or missing", method)
+		}
+		resp.Body.Close()
 	}
 }
 
