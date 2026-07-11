@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -155,27 +156,6 @@ func TestRejectUnparseableTimeout(t *testing.T) {
 }
 
 func TestTokenNotInError(t *testing.T) {
-	getenv := func(key string) string {
-		switch key {
-		case "RAVEN_ADDR":
-			return "127.0.0.1:8789"
-		case "RAVEN_DATA_DIR":
-			return "./data"
-		case "RAVEN_REQUEST_TIMEOUT":
-			return "10s"
-		case "RAVEN_API_TOKEN":
-			return "this-should-not-appear-12345"
-		default:
-			return ""
-		}
-	}
-
-	cfg, err := Load(getenv)
-	if err != nil {
-		t.Fatalf("unexpected error with valid config: %v", err)
-	}
-	_ = cfg
-
 	// Now test with an invalid config to see if token leaks
 	badgetenv := func(key string) string {
 		switch key {
@@ -191,36 +171,14 @@ func TestTokenNotInError(t *testing.T) {
 			return ""
 		}
 	}
-	_, err = Load(badgetenv)
+	_, err := Load(badgetenv)
 	if err == nil {
 		t.Fatal("expected error for blank data dir, got nil")
 	}
 	errStr := err.Error()
-	if contains(errStr, "this-should-not-appear-12345") {
+	if strings.Contains(errStr, "this-should-not-appear-12345") {
 		t.Errorf("token leaked into error message: %q", errStr)
 	}
-}
-
-// contains reports whether substr is within s.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-// searchString is a simple substring search without importing strings.
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		match := true
-		for j := 0; j < len(substr); j++ {
-			if s[i+j] != substr[j] {
-				match = false
-				break
-			}
-		}
-		if match {
-			return true
-		}
-	}
-	return false
 }
 
 // TestTokenNotInStringMethod checks that Config.String() does not expose the token.
@@ -232,7 +190,7 @@ func TestTokenNotInString(t *testing.T) {
 		APIToken:       "hidden-token-value",
 	}
 	s := cfg.String()
-	if contains(s, "hidden-token-value") {
+	if strings.Contains(s, "hidden-token-value") {
 		t.Errorf("token leaked via String(): %q", s)
 	}
 }
