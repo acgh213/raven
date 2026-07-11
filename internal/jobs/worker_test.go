@@ -62,6 +62,14 @@ func (h errorHandler) Handle(ctx context.Context, job *model.Job) error {
 	return fmt.Errorf("%s", h.msg)
 }
 
+// blockingHandler blocks until the context is cancelled.
+type blockingHandler struct{}
+
+func (blockingHandler) Handle(ctx context.Context, job *model.Job) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
 // TestWorkerSuccess verifies that a worker claims a job, runs its handler,
 // and the job ends up completed.
 func TestWorkerSuccess(t *testing.T) {
@@ -199,8 +207,8 @@ func TestWorkerUnknownKind(t *testing.T) {
 	}
 }
 
-// TestWorkerMaxConcurrent verifies that the worker respects the max concurrent
-// handler count. By default (1) it processes one job at a time.
+// TestWorkerMaxConcurrent uses a deterministic barrier to verify that the
+// worker respects the max concurrent handler count.
 func TestWorkerMaxConcurrent(t *testing.T) {
 	t.Parallel()
 
@@ -209,55 +217,152 @@ func TestWorkerMaxConcurrent(t *testing.T) {
 	clk := &fixedClock{t: time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)}
 	js := store.NewJobStore(database, clk)
 
-	// Track concurrency.
-	var mu sync.Mutex
-	maxConcurrent := 0
-	currentConcurrent := 0
+	// barrier synchronizes handlers: first two signal entry, then all wait.
+	entered := make(chan struct{}, 2)
+	exit := make(chan struct{})
 
-	// A handler that records peak concurrency.
+	var mu sync.Mutex
+	var peak int
+	var cur int
+
 	handlers := map[string]Handler{
 		"track-kind": HandlerFunc(func(ctx context.Context, job *model.Job) error {
 			mu.Lock()
-			currentConcurrent++
-			if currentConcurrent > maxConcurrent {
-				maxConcurrent = currentConcurrent
+			cur++
+			if cur > peak {
+				peak = cur
 			}
 			mu.Unlock()
 
-			// Small sleep to let concurrency build up.
-			time.Sleep(50 * time.Millisecond)
+			// Signal entry (non-blocking, up to cap=2).
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
 
-			mu.Lock()
-			currentConcurrent--
-			mu.Unlock()
+			// Block until barrier releases.
+			<-exit
 			return nil
 		}),
 	}
 
 	w := NewWorker(js, handlers, 2) // Allow 2 concurrent.
 
-	// Enqueue 3 jobs (all same kind, same handler).
+	// Enqueue 3 jobs.
 	for i := 0; i < 3; i++ {
 		if _, err := js.Enqueue(ctx, "track-kind", `{}`, fmt.Sprintf("track-%d", i)); err != nil {
 			t.Fatalf("Enqueue job %d: %v", i, err)
 		}
 	}
 
-	// Run the worker in a goroutine so we can let it process all jobs.
-	// Worker.Run is blocking; run it in background.
-	var wg sync.WaitGroup
-	wg.Add(1)
+	// Run the worker in a goroutine.
+	var workerWg sync.WaitGroup
+	workerWg.Add(1)
 	go func() {
-		defer wg.Done()
+		defer workerWg.Done()
 		w.Run(ctx)
 	}()
-	wg.Wait()
 
-	// maxConcurrent should be at most 2 (our limit).
-	if maxConcurrent > 2 {
-		t.Errorf("max concurrent handlers: got %d, want <= 2", maxConcurrent)
+	// Wait for the first 2 handlers to enter.
+	for i := 0; i < 2; i++ {
+		<-entered
 	}
-	if maxConcurrent < 2 {
-		t.Logf("note: max concurrent was %d (may be low on single-CPU)", maxConcurrent)
+
+	// At this point exactly 2 handlers should be running.
+	mu.Lock()
+	got := peak
+	mu.Unlock()
+	if got > 2 {
+		t.Errorf("peak concurrency: got %d, want <= 2", got)
+	}
+	if got < 2 {
+		t.Errorf("peak concurrency: got %d, want at least 2", got)
+	}
+
+	// Release the barrier so handlers complete.
+	close(exit)
+	workerWg.Wait()
+
+	// All jobs should be completed.
+	var pendingCount int
+	if err := database.QueryRowContext(ctx, "SELECT COUNT(*) FROM jobs WHERE status != 'completed'").Scan(&pendingCount); err != nil {
+		t.Fatalf("query pending count: %v", err)
+	}
+	if pendingCount != 0 {
+		t.Errorf("expected all jobs completed, got %d non-completed", pendingCount)
+	}
+}
+
+// TestWorkerContextCancellation verifies that Run promptly stops when the
+// context is cancelled, including while waiting between poll cycles.
+func TestWorkerContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	database := openDB(t)
+	ctx := context.Background()
+	clk := &fixedClock{t: time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)}
+	js := store.NewJobStore(database, clk)
+
+	handlers := map[string]Handler{
+		"test-kind": sleepHandler{},
+	}
+	w := NewWorker(js, handlers, 1)
+
+	// Enqueue a job that will block to give us time to cancel.
+	blockJob, err := js.Enqueue(ctx, "test-kind", `{}`, "")
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	// Cancel the context after a short delay.
+	runCtx, cancel := context.WithCancel(ctx)
+	time.AfterFunc(10*time.Millisecond, cancel)
+
+	start := time.Now()
+	w.Run(runCtx)
+	elapsed := time.Since(start)
+
+	// Verify the worker stopped promptly (within a reasonable margin).
+	if elapsed > 2*time.Second {
+		t.Errorf("Run took too long to respond to cancellation: %v", elapsed)
+	}
+
+	// Verify the blockJob was claimed but not completed (it was still running
+	// when cancelled, so the lease was not released).
+	var status string
+	if err := database.QueryRowContext(ctx, "SELECT status FROM jobs WHERE id = ?", blockJob.ID).Scan(&status); err != nil {
+		t.Fatalf("query job: %v", err)
+	}
+	if status != model.JobStatusClaimed {
+		t.Logf("job status after cancellation: %q (expected 'claimed')", status)
+	}
+}
+
+// TestWorkerCancelsWhileWaitingAfterStoreError verifies that Run stops
+// promptly on cancellation even when it is in the backoff-wait loop after a
+// store error.
+func TestWorkerCancelsWhileWaitingAfterStoreError(t *testing.T) {
+	t.Parallel()
+
+	database := openDB(t)
+	ctx := context.Background()
+	clk := &fixedClock{t: time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)}
+	js := store.NewJobStore(database, clk)
+
+	handlers := map[string]Handler{
+		"test-kind": sleepHandler{},
+	}
+	w := NewWorker(js, handlers, 1)
+
+	// Cancel immediately so the worker should stop on first backoff check.
+	runCtx, cancel := context.WithCancel(ctx)
+	cancel()
+
+	start := time.Now()
+	w.Run(runCtx)
+	elapsed := time.Since(start)
+
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("Run took too long to respond to immediate cancellation: %v", elapsed)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"raven/internal/model"
@@ -41,43 +42,115 @@ func generateID() string {
 	return hex.EncodeToString(b)
 }
 
+// scanJob scans a single job row from a row-like interface.
+func scanJob(scanner interface {
+	Scan(dest ...any) error
+}) (model.Job, error) {
+	var job model.Job
+	err := scanner.Scan(
+		&job.ID, &job.Kind, &job.Payload, &job.Status,
+		&job.DedupeKey, &job.LeaseID, &job.LeasedUntil,
+		&job.RetryCount, &job.MaxRetries, &job.ScheduledAt,
+		&job.LastError, &job.CreatedAt, &job.UpdatedAt,
+	)
+	return job, err
+}
+
+const jobSelectCols = `id, kind, payload, status,
+	COALESCE(dedupe_key, ''), COALESCE(lease_id, ''), COALESCE(leased_until, ''),
+	retry_count, max_retries, scheduled_at, COALESCE(last_error, ''),
+	created_at, updated_at`
+
 // Enqueue inserts a new job or returns the existing one if dedupe_key is
 // nonempty and a job with that key is still active (pending or claimed).
 // Empty dedupe keys always create independent jobs.
+// The lookup and insert are performed atomically in a transaction. If a
+// concurrent enqueue wins the race and the schema's dedupe constraint fires,
+// the existing active job is re-queried and returned.
 func (s *JobStore) Enqueue(ctx context.Context, kind, payload, dedupeKey string) (*model.Job, error) {
 	now := s.nowRFC3339Nano()
-	id := generateID()
 
-	// If dedupeKey is nonempty, check for an existing active job first.
-	if dedupeKey != "" {
-		var existing model.Job
-		err := s.db.QueryRowContext(ctx,
-			`SELECT id, kind, payload, status,
-			        COALESCE(dedupe_key, ''), COALESCE(lease_id, ''), COALESCE(leased_until, ''),
-			        retry_count, max_retries, scheduled_at, COALESCE(last_error, ''),
-			        created_at, updated_at
-			 FROM jobs
-			 WHERE dedupe_key = ? AND status IN ('pending', 'claimed')`,
-			dedupeKey,
-		).Scan(
-			&existing.ID, &existing.Kind, &existing.Payload, &existing.Status,
-			&existing.DedupeKey, &existing.LeaseID, &existing.LeasedUntil,
-			&existing.RetryCount, &existing.MaxRetries, &existing.ScheduledAt,
-			&existing.LastError, &existing.CreatedAt, &existing.UpdatedAt,
+	// No dedupe key: simple insert outside a transaction.
+	if dedupeKey == "" {
+		id := generateID()
+		job := &model.Job{
+			ID:          id,
+			Kind:        kind,
+			Payload:     payload,
+			Status:      model.JobStatusPending,
+			DedupeKey:   dedupeKey,
+			RetryCount:  0,
+			MaxRetries:  3,
+			ScheduledAt: now,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+		_, err := s.db.ExecContext(ctx,
+			`INSERT INTO jobs (id, kind, payload, status, dedupe_key, retry_count, max_retries, scheduled_at, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, NULL, 0, 3, ?, ?, ?)`,
+			id, kind, payload, model.JobStatusPending, now, now, now,
 		)
-		if err == nil {
-			return &existing, nil
+		if err != nil {
+			return nil, fmt.Errorf("enqueue: %w", err)
 		}
-		if err != sql.ErrNoRows {
-			return nil, fmt.Errorf("check dedupe: %w", err)
-		}
+		return job, nil
 	}
 
-	// Determine the dedupeKey to insert: use NULL for empty string so the
-	// partial unique index on non-NULL dedupe_key is not activated.
-	var dedupeSQL *string
-	if dedupeKey != "" {
-		dedupeSQL = &dedupeKey
+	// With a dedupe key, use a transaction for atomic lookup-and-insert.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("enqueue tx begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Look for existing active job with same dedupe key.
+	var existing model.Job
+	err = tx.QueryRowContext(ctx,
+		`SELECT `+jobSelectCols+` FROM jobs
+		 WHERE dedupe_key = ? AND status IN ('pending', 'claimed')`,
+		dedupeKey,
+	).Scan(
+		&existing.ID, &existing.Kind, &existing.Payload, &existing.Status,
+		&existing.DedupeKey, &existing.LeaseID, &existing.LeasedUntil,
+		&existing.RetryCount, &existing.MaxRetries, &existing.ScheduledAt,
+		&existing.LastError, &existing.CreatedAt, &existing.UpdatedAt,
+	)
+	if err == nil {
+		// Found existing active job — return it.
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("enqueue dedupe commit: %w", err)
+		}
+		return &existing, nil
+	}
+	if err != sql.ErrNoRows {
+		return nil, fmt.Errorf("enqueue dedupe lookup: %w", err)
+	}
+
+	// No existing active job — insert.
+	id := generateID()
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO jobs (id, kind, payload, status, dedupe_key, retry_count, max_retries, scheduled_at, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, 0, 3, ?, ?, ?)`,
+		id, kind, payload, model.JobStatusPending, dedupeKey, now, now, now,
+	)
+	if err != nil {
+		// If the unique index constraint was violated (race lost), re-query
+		// and return the existing active job.
+		if isConstraintError(err) {
+			if err := tx.Rollback(); err != nil {
+				return nil, fmt.Errorf("enqueue race rollback: %w", err)
+			}
+			return s.findActiveByDedupe(ctx, dedupeKey)
+		}
+		return nil, fmt.Errorf("enqueue: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		// Check for constraint violation at commit time as well.
+		if isConstraintError(err) {
+			return s.findActiveByDedupe(ctx, dedupeKey)
+		}
+		return nil, fmt.Errorf("enqueue commit: %w", err)
 	}
 
 	job := &model.Job{
@@ -92,16 +165,46 @@ func (s *JobStore) Enqueue(ctx context.Context, kind, payload, dedupeKey string)
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
-
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO jobs (id, kind, payload, status, dedupe_key, retry_count, max_retries, scheduled_at, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, 0, 3, ?, ?, ?)`,
-		id, kind, payload, model.JobStatusPending, dedupeSQL, now, now, now,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("enqueue: %w", err)
-	}
 	return job, nil
+}
+
+// findActiveByDedupe re-queries for an active job by dedupe key after a race
+// loss. It is called outside the transaction so the winning insert is visible.
+func (s *JobStore) findActiveByDedupe(ctx context.Context, dedupeKey string) (*model.Job, error) {
+	var existing model.Job
+	err := s.db.QueryRowContext(ctx,
+		`SELECT `+jobSelectCols+` FROM jobs
+		 WHERE dedupe_key = ? AND status IN ('pending', 'claimed')
+		 LIMIT 1`,
+		dedupeKey,
+	).Scan(
+		&existing.ID, &existing.Kind, &existing.Payload, &existing.Status,
+		&existing.DedupeKey, &existing.LeaseID, &existing.LeasedUntil,
+		&existing.RetryCount, &existing.MaxRetries, &existing.ScheduledAt,
+		&existing.LastError, &existing.CreatedAt, &existing.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("enqueue: concurrency race lost and no active job found for dedupe_key %q", dedupeKey)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("enqueue dedupe fallback: %w", err)
+	}
+	return &existing, nil
+}
+
+// isConstraintError returns true if the error is a SQLite UNIQUE or PRIMARY
+// KEY constraint violation. It checks the modernc.org/sqlite error string.
+func isConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	// modernc.org/sqlite constraint violations contain these strings.
+	return strings.Contains(msg, "UNIQUE constraint failed") ||
+		strings.Contains(msg, "PRIMARY KEY must be unique") ||
+		strings.Contains(msg, "constraint failed") ||
+		strings.Contains(msg, "constraint violation") ||
+		strings.Contains(msg, "SQLITE_CONSTRAINT")
 }
 
 // ClaimNext atomically claims one due pending job or reclaims a job with an
@@ -121,24 +224,14 @@ func (s *JobStore) ClaimNext(ctx context.Context) (*model.Job, error) {
 	defer tx.Rollback()
 
 	// Find one eligible job: pending and due, or claimed with expired lease.
-	var job model.Job
-	err = tx.QueryRowContext(ctx,
-		`SELECT id, kind, payload, status,
-		        COALESCE(dedupe_key, ''), COALESCE(lease_id, ''), COALESCE(leased_until, ''),
-		        retry_count, max_retries, scheduled_at, COALESCE(last_error, ''),
-		        created_at, updated_at
-		 FROM jobs
+	job, err := scanJob(tx.QueryRowContext(ctx,
+		`SELECT `+jobSelectCols+` FROM jobs
 		 WHERE (status = 'pending' AND scheduled_at <= ?)
 		    OR (status = 'claimed' AND leased_until <= ?)
 		 ORDER BY scheduled_at ASC
 		 LIMIT 1`,
 		nowStr, nowStr,
-	).Scan(
-		&job.ID, &job.Kind, &job.Payload, &job.Status,
-		&job.DedupeKey, &job.LeaseID, &job.LeasedUntil,
-		&job.RetryCount, &job.MaxRetries, &job.ScheduledAt,
-		&job.LastError, &job.CreatedAt, &job.UpdatedAt,
-	)
+	))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

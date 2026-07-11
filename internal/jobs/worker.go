@@ -6,7 +6,9 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
+	"time"
 
 	"raven/internal/model"
 	"raven/internal/store"
@@ -27,11 +29,13 @@ func (f HandlerFunc) Handle(ctx context.Context, job *model.Job) error {
 }
 
 // Worker claims jobs from a JobStore and dispatches them to registered
-// handlers. It processes jobs in a loop until no eligible jobs remain.
+// handlers. It processes jobs in a loop until no eligible jobs remain or
+// the context is cancelled.
 type Worker struct {
 	store         *store.JobStore
 	handlers      map[string]Handler // keyed by job kind
 	maxConcurrent int
+	log           *slog.Logger
 }
 
 // NewWorker creates a Worker. maxConcurrent is the maximum number of handler
@@ -44,23 +48,58 @@ func NewWorker(s *store.JobStore, handlers map[string]Handler, maxConcurrent int
 		store:         s,
 		handlers:      handlers,
 		maxConcurrent: maxConcurrent,
+		log:           slog.Default(),
 	}
 }
 
+// maxBackoff is the maximum duration for exponential backoff after store errors.
+const maxBackoff = 1 * time.Second
+
 // Run claims and processes jobs until no eligible jobs remain. It respects
 // the maxConcurrent limit by using a semaphore channel.
+// Transient store errors from ClaimNext are surfaced through the logger and
+// retried with bounded short exponential backoff rather than permanently
+// killing the worker. The method promptly stops when ctx is cancelled,
+// including while waiting during backoff.
 func (w *Worker) Run(ctx context.Context) {
 	sem := make(chan struct{}, w.maxConcurrent)
 	var wg sync.WaitGroup
 
+	backoff := 50 * time.Millisecond
+
 	for {
+		select {
+		case <-ctx.Done():
+			// Context cancelled — drain and stop.
+			wg.Wait()
+			return
+		default:
+		}
+
 		job, err := w.store.ClaimNext(ctx)
 		if err != nil {
-			// Log-worthy but not fatal; break the loop.
-			break
+			// Transient store error: log and retry with bounded backoff.
+			w.log.Error("claim next error", "error", err)
+			select {
+			case <-ctx.Done():
+				wg.Wait()
+				return
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
 		}
+
+		// Reset backoff on successful claim (or nil).
+		backoff = 50 * time.Millisecond
+
 		if job == nil {
-			break // No more work.
+			// No more work — drain is complete.
+			wg.Wait()
+			return
 		}
 
 		// Acquire semaphore slot.
@@ -74,8 +113,6 @@ func (w *Worker) Run(ctx context.Context) {
 			w.process(ctx, j)
 		}(job)
 	}
-
-	wg.Wait()
 }
 
 // process handles a single claimed job.
@@ -83,16 +120,37 @@ func (w *Worker) process(ctx context.Context, job *model.Job) {
 	handler, ok := w.handlers[job.Kind]
 	if !ok {
 		// Unknown kind: fail with a visible error.
-		_ = w.store.Fail(ctx, job.ID, job.LeaseID,
+		err := w.store.Fail(ctx, job.ID, job.LeaseID,
 			fmt.Sprintf("no handler registered for job kind %q", job.Kind),
 		)
+		if err != nil {
+			w.log.Error("failed to fail unknown-kind job",
+				"job_id", job.ID,
+				"kind", job.Kind,
+				"error", err,
+			)
+		}
 		return
 	}
 
 	if err := handler.Handle(ctx, job); err != nil {
-		_ = w.store.Fail(ctx, job.ID, job.LeaseID, err.Error())
+		failErr := w.store.Fail(ctx, job.ID, job.LeaseID, err.Error())
+		if failErr != nil {
+			w.log.Error("failed to record job failure",
+				"job_id", job.ID,
+				"kind", job.Kind,
+				"handler_error", err,
+				"fail_error", failErr,
+			)
+		}
 		return
 	}
 
-	_ = w.store.Complete(ctx, job.ID, job.LeaseID)
+	if err := w.store.Complete(ctx, job.ID, job.LeaseID); err != nil {
+		w.log.Error("failed to complete job",
+			"job_id", job.ID,
+			"kind", job.Kind,
+			"error", err,
+		)
+	}
 }

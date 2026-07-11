@@ -3,13 +3,20 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
+	"time"
 
 	"raven/internal/app"
 	"raven/internal/config"
+	"raven/internal/db"
+	"raven/internal/jobs"
+	"raven/internal/model"
+	"raven/internal/store"
 )
 
 func main() {
@@ -17,7 +24,41 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to load config: %v", err)
 	}
+	slog.Info("starting raven", "config", cfg)
 
+	// Ensure data directory exists.
+	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
+		log.Fatalf("failed to create data directory %q: %v", cfg.DataDir, err)
+	}
+
+	// Open and migrate the database.
+	dbPath := filepath.Join(cfg.DataDir, "raven.db")
+	database, err := db.Open(dbPath)
+	if err != nil {
+		log.Fatalf("failed to open database: %v", err)
+	}
+	defer func() {
+		if err := database.Close(); err != nil {
+			slog.Error("failed to close database", "error", err)
+		}
+	}()
+
+	ctx := context.Background()
+	if err := db.Migrate(ctx, database); err != nil {
+		log.Fatalf("failed to migrate database: %v", err)
+	}
+	slog.Info("database migrated", "path", dbPath)
+
+	// Build the worker.
+	clock := model.RealClock{}
+	jobStore := store.NewJobStore(database, clock)
+
+	// Empty handler map until feed jobs are added. Unknown persisted jobs
+	// will be failed visibly with a descriptive error by the worker.
+	handlers := map[string]jobs.Handler{}
+	worker := jobs.NewWorker(jobStore, handlers, 1)
+
+	// HTTP server.
 	handler := app.New()
 	srv := &http.Server{
 		Addr:         cfg.Addr,
@@ -27,26 +68,49 @@ func main() {
 		IdleTimeout:  2 * cfg.RequestTimeout,
 	}
 
-	// Start server in a goroutine so we can listen for signals.
+	// Start server in a goroutine.
 	go func() {
-		log.Printf("listening on %s", cfg.Addr)
+		slog.Info("listening", "addr", cfg.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server error: %v", err)
 		}
 	}()
 
-	// Wait for SIGINT or SIGTERM.
+	// Create a context that is cancelled on SIGINT/SIGTERM.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-quit
-	log.Printf("received signal %v, shutting down", sig)
 
-	// Give outstanding requests up to RequestTimeout to complete.
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.RequestTimeout)
+	runCtx, stop := context.WithCancel(context.Background())
+
+	go func() {
+		sig := <-quit
+		slog.Info("received signal, shutting down", "signal", sig)
+		stop()
+	}()
+
+	// Run a periodic worker-drain loop under the signal-cancelled context.
+	// Worker.Run drains all eligible jobs and returns. We loop with a poll
+	// interval so new jobs are picked up promptly.
+	slog.Info("starting worker drain loop")
+	pollInterval := 5 * time.Second
+	for {
+		worker.Run(runCtx)
+		select {
+		case <-runCtx.Done():
+			slog.Info("worker loop stopped")
+		default:
+			time.Sleep(pollInterval)
+			continue
+		}
+		break
+	}
+
+	// Graceful HTTP shutdown.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.RequestTimeout)
 	defer cancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("forced shutdown: %v", err)
 	}
-	log.Print("server stopped gracefully")
+	slog.Info("server stopped gracefully")
 }

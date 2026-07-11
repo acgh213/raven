@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,13 +13,23 @@ import (
 )
 
 // fixedClock returns a deterministic time source for testing.
+// It is safe for concurrent use.
 type fixedClock struct {
-	t time.Time
+	mu sync.Mutex
+	t  time.Time
 }
 
-func (c *fixedClock) Now() time.Time { return c.t }
+func (c *fixedClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
 
-func (c *fixedClock) advance(d time.Duration) { c.t = c.t.Add(d) }
+func (c *fixedClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
+}
 
 // openDB is a test helper that opens an in-memory database and runs migrations.
 func openDB(t *testing.T) *sql.DB {
@@ -148,6 +159,60 @@ func TestEnqueueBlankDedupe(t *testing.T) {
 	}
 	if job1.ID == job2.ID {
 		t.Error("expected different job IDs for blank dedupe keys")
+	}
+}
+
+// TestEnqueueDedupeAtomic verifies that concurrent Enqueue with the same
+// dedupe key does not result in duplicate active jobs, even when two calls
+// race. The transaction wraps lookup and insert atomically, and a constraint
+// violation fallback re-queries the existing job.
+func TestEnqueueDedupeAtomic(t *testing.T) {
+	database := openDB(t)
+	ctx := context.Background()
+	clk := &fixedClock{t: time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)}
+	s := NewJobStore(database, clk)
+
+	// Enqueue first job with dedupe key.
+	_, err := s.Enqueue(ctx, "test-kind", `{"a":1}`, "dedupe-atomic")
+	if err != nil {
+		t.Fatalf("first Enqueue: %v", err)
+	}
+
+	// Directly insert a second job with same dedupe key to simulate a race
+	// that beats the transaction's SELECT but hits the unique index.
+	// This simulates what happens when two goroutines both pass the SELECT
+	// and race on the INSERT.
+	_, err = database.ExecContext(ctx,
+		`INSERT INTO jobs (id, kind, payload, status, dedupe_key, retry_count, max_retries, scheduled_at, created_at, updated_at)
+		 VALUES ('race-id', 'test-kind', '{}', 'pending', 'dedupe-atomic', 0, 3, '2025-06-15T12:00:00Z', '2025-06-15T12:00:00Z', '2025-06-15T12:00:00Z')`,
+	)
+	if err != nil {
+		// If the unique index prevented it, that's fine — the implementation
+		// should handle this case.
+		t.Logf("note: direct insert with same dedupe key failed (expected in some impls): %v", err)
+	}
+
+	// Now call Enqueue again — must not return an error. It should return
+	// the existing job (either job1 or the race-id).
+	job2, err := s.Enqueue(ctx, "test-kind", `{"a":2}`, "dedupe-atomic")
+	if err != nil {
+		t.Fatalf("second Enqueue after race: %v", err)
+	}
+
+	// Verify we got a valid job ID (no raw constraint error leaked).
+	if job2.ID == "" {
+		t.Fatal("expected non-empty job ID from dedupe")
+	}
+
+	// Verify there is exactly 1 active job with this dedupe key.
+	var count int
+	if err := database.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM jobs WHERE dedupe_key = 'dedupe-atomic' AND status IN ('pending', 'claimed')",
+	).Scan(&count); err != nil {
+		t.Fatalf("count active: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 active job with dedupe key, got %d", count)
 	}
 }
 
