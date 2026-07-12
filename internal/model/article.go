@@ -32,3 +32,18 @@ type UpsertArticlesResult struct {
 	New    []Article
 	Exists int
 }
+
+// ContentVersion is a stored extraction run for an article.
+type ContentVersion struct {
+	ID                 string `json:"id"`
+	ArticleID          string `json:"article_id"`
+	ArticleURL         string `json:"article_url"`
+	ExtractionStatus   string `json:"extraction_status"`
+	ExtractionEngine   string `json:"extraction_engine"`
+	ExtractionVersion  string `json:"extraction_version"`
+	WordCount          int    `json:"word_count"`
+	LeadImageURL       string `json:"lead_image_url"`
+	ContentHash        string `json:"content_hash"`
+	IsLatest           bool   `json:"is_latest"`
+	CreatedAt          string `json:"created_at"`
+}

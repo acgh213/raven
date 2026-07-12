@@ -74,9 +74,11 @@ func main() {
 	}
 
 	// Register job handlers.
-	pollHandler := handler.NewPollHandler(p, jobStore, feedURLs)
+	pollHandler := handler.NewPollHandler(p, jobStore, feedURLs, articleStore)
+	extractHandler := handler.NewExtractHandler(fetchClient, articleStore)
 	handlers := map[string]jobs.Handler{
-		"poll_feed": pollHandler,
+		"poll_feed":     pollHandler,
+		"fetch_article": extractHandler,
 	}
 	worker := jobs.NewWorker(jobStore, handlers, 1)
 

@@ -18,20 +18,27 @@ type PollPayload struct {
 	FeedURL string `json:"feed_url"`
 }
 
+// PendingCVLister finds content versions awaiting extraction.
+type PendingCVLister interface {
+	ListPendingForFeed(ctx context.Context, feedID string, limit int) ([]model.ContentVersion, error)
+}
+
 // PollHandler processes poll_feed jobs by fetching the feed, parsing entries,
-// upserting new articles, and scheduling the next poll.
+// upserting new articles, enqueuing extraction jobs, and scheduling the next poll.
 type PollHandler struct {
 	poller   *poller.Poller
 	jobs     *store.JobStore
-	feedURLs map[string]string // feedID → feedURL cache populated at startup
+	feedURLs map[string]string
+	cvLister PendingCVLister
 }
 
 // NewPollHandler creates a PollHandler.
-func NewPollHandler(p *poller.Poller, jobs *store.JobStore, feedURLs map[string]string) *PollHandler {
+func NewPollHandler(p *poller.Poller, jobs *store.JobStore, feedURLs map[string]string, cvLister PendingCVLister) *PollHandler {
 	return &PollHandler{
 		poller:   p,
 		jobs:     jobs,
 		feedURLs: feedURLs,
+		cvLister: cvLister,
 	}
 }
 
@@ -61,8 +68,28 @@ func (h *PollHandler) Handle(ctx context.Context, job *model.Job) error {
 		return fmt.Errorf("poll %q: %w", feedURL, result.Error)
 	}
 
-	// Schedule the next poll for this feed at the poller's recommended time.
-	// Use a dedupe key so a racing startup seed doesn't create a duplicate.
+	// Enqueue fetch_article jobs for any new articles with pending content versions.
+	if h.cvLister != nil && result.NewArticles > 0 {
+		pending, listErr := h.cvLister.ListPendingForFeed(ctx, payload.FeedID, 100)
+		if listErr != nil {
+			// Non-fatal: poll itself succeeded.
+			_ = listErr
+		}
+		for _, cv := range pending {
+			extPayload, _ := json.Marshal(extractPayload{
+				ArticleID:        cv.ArticleID,
+				ContentVersionID: cv.ID,
+				ArticleURL:       cv.ArticleURL,
+			})
+			dedupeKey := "fetch_article:" + cv.ID
+			if _, err := h.jobs.Enqueue(ctx, "fetch_article", string(extPayload), dedupeKey); err != nil {
+				// Non-fatal: one extraction job failing to enqueue shouldn't block the poll.
+				_ = err
+			}
+		}
+	}
+
+	// Schedule the next poll for this feed.
 	scheduledAt := result.NextPoll.Format(time.RFC3339Nano)
 	nextPayload, _ := json.Marshal(PollPayload{FeedID: payload.FeedID, FeedURL: feedURL})
 	dedupeKey := "poll_feed:" + payload.FeedID

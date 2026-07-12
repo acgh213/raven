@@ -149,3 +149,122 @@ func TestUpsertArticlesUsesURLAsFallbackGUID(t *testing.T) {
 		t.Errorf("stored GUID = %q, want URL fallback", result.New[0].GUID)
 	}
 }
+
+func TestListPendingForFeedReturnsPendingContentVersions(t *testing.T) {
+	database := openDB(t)
+	clock := &fixedClock{t: time.Date(2026, 7, 11, 19, 0, 0, 0, time.UTC)}
+	feeds := NewFeedStore(database, clock)
+	articles := NewArticleStore(database, clock)
+
+	importResult, err := feeds.Import(context.Background(), []model.FeedCandidate{
+		{URL: "https://example.com/feed.xml", Title: "Example"},
+	})
+	if err != nil {
+		t.Fatalf("seed Import(): %v", err)
+	}
+	feedID := importResult.Created[0].ID
+
+	// Create articles with pending content versions.
+	_, err = articles.UpsertArticles(context.Background(), feedID, []model.FeedEntry{
+		{GUID: "post-1", Title: "First", URL: "https://example.com/1"},
+		{GUID: "post-2", Title: "Second", URL: "https://example.com/2"},
+	})
+	if err != nil {
+		t.Fatalf("UpsertArticles(): %v", err)
+	}
+
+	pending, err := articles.ListPendingForFeed(context.Background(), feedID, 10)
+	if err != nil {
+		t.Fatalf("ListPendingForFeed(): %v", err)
+	}
+	if len(pending) != 2 {
+		t.Fatalf("pending count = %d, want 2", len(pending))
+	}
+	for _, v := range pending {
+		if v.ExtractionStatus != CVStatusPending {
+			t.Errorf("version %q status = %q, want pending", v.ID, v.ExtractionStatus)
+		}
+	}
+}
+
+func TestUpdateContentVersionMarksComplete(t *testing.T) {
+	database := openDB(t)
+	clock := &fixedClock{t: time.Date(2026, 7, 11, 19, 0, 0, 0, time.UTC)}
+	feeds := NewFeedStore(database, clock)
+	articles := NewArticleStore(database, clock)
+
+	importResult, err := feeds.Import(context.Background(), []model.FeedCandidate{
+		{URL: "https://example.com/feed.xml", Title: "Example"},
+	})
+	if err != nil {
+		t.Fatalf("seed Import(): %v", err)
+	}
+	feedID := importResult.Created[0].ID
+
+	result, _ := articles.UpsertArticles(context.Background(), feedID, []model.FeedEntry{
+		{GUID: "post-1", Title: "First", URL: "https://example.com/1"},
+	})
+	cvID := *result.New[0].LatestContentVersionID
+
+	err = articles.UpdateContentVersion(context.Background(), cvID,
+		[]byte("<html><p>Hello</p></html>"), "Hello", 1, "", "abc123", "test-engine", "1.0", CVStatusCompleted,
+	)
+	if err != nil {
+		t.Fatalf("UpdateContentVersion(completed): %v", err)
+	}
+
+	var status string
+	var wordCount int
+	var extractedText string
+	database.QueryRow(
+		"SELECT extraction_status, word_count, extracted_text FROM article_content_versions WHERE id = ?", cvID,
+	).Scan(&status, &wordCount, &extractedText)
+	if status != CVStatusCompleted {
+		t.Errorf("status = %q, want completed", status)
+	}
+	if wordCount != 1 {
+		t.Errorf("word_count = %d, want 1", wordCount)
+	}
+	if extractedText != "Hello" {
+		t.Errorf("extracted_text = %q, want Hello", extractedText)
+	}
+
+	// Pending list should be empty now.
+	pending, _ := articles.ListPendingForFeed(context.Background(), feedID, 10)
+	if len(pending) != 0 {
+		t.Errorf("pending after completion = %d, want 0", len(pending))
+	}
+}
+
+func TestUpdateContentVersionMarksFailed(t *testing.T) {
+	database := openDB(t)
+	clock := &fixedClock{t: time.Date(2026, 7, 11, 19, 0, 0, 0, time.UTC)}
+	feeds := NewFeedStore(database, clock)
+	articles := NewArticleStore(database, clock)
+
+	importResult, err := feeds.Import(context.Background(), []model.FeedCandidate{
+		{URL: "https://example.com/feed.xml", Title: "Example"},
+	})
+	if err != nil {
+		t.Fatalf("seed Import(): %v", err)
+	}
+	feedID := importResult.Created[0].ID
+
+	result, _ := articles.UpsertArticles(context.Background(), feedID, []model.FeedEntry{
+		{GUID: "post-1", Title: "First", URL: "https://example.com/1"},
+	})
+	cvID := *result.New[0].LatestContentVersionID
+
+	err = articles.UpdateContentVersion(context.Background(), cvID,
+		nil, "", 0, "", "", "", "", CVStatusFailed,
+	)
+	if err != nil {
+		t.Fatalf("UpdateContentVersion(failed): %v", err)
+	}
+
+	var status string
+	database.QueryRow("SELECT extraction_status FROM article_content_versions WHERE id = ?", cvID).Scan(&status)
+	if status != CVStatusFailed {
+		t.Errorf("status = %q, want failed", status)
+	}
+}
