@@ -159,6 +159,7 @@ func (s *ArticleStore) ListArticles(ctx context.Context, params model.ArticleLis
 		}
 		s.IsRead = isRead == 1
 		s.IsStarred = isStarred == 1
+		s.ExtractedText = extractedText
 		if len(extractedText) > 200 {
 			s.Excerpt = extractedText[:200]
 		} else {

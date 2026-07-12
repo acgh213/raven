@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <opml version="2.0">
   <head>
     <title>Raven Feeds</title>
@@ -6,102 +6,96 @@
     <ownerName>Cassie</ownerName>
   </head>
   <body>
-    <!--
-      Curated for Raven — a librarian for your feeds, not an editor of them.
-      Categories: Gaming, Tech News, Software Development, AI & ML, Vendor News, Light News, Science
-    -->
+    
 
-    <!-- ═══════════════════════════════════════════ -->
-    <!-- GAMING                                        -->
-    <!-- ═══════════════════════════════════════════ -->
+    
+    
+    
     <outline text="🎮 Gaming" title="Gaming">
-      <!-- Press & industry feeds -->
-      <outline text="GamesPress" title="GamesPress" description="Official games industry press releases and assets" xmlUrl="https://www.gamespress.com/Files/ComboRSS" type="rss"/>
-      <outline text="Steam News" title="Steam News" description="Official Steam platform news" xmlUrl="https://store.steampowered.com/feeds/news.xml" type="rss"/>
+      
+      <outline text="GamesPress" title="GamesPress" description="Official games industry press releases and assets" xmlUrl="https://www.gamespress.com/Files/ComboRSS" type="rss" />
+      <outline text="Steam News" title="Steam News" description="Official Steam platform news" xmlUrl="https://store.steampowered.com/feeds/news.xml" type="rss" />
 
-      <!-- Major publications -->
-      <outline text="Eurogamer" title="Eurogamer" description="Latest articles from Eurogamer.net" xmlUrl="https://www.eurogamer.net/?format=rss" type="rss"/>
-      <outline text="GameSpot" title="GameSpot" description="GameSpot's Everything Feed" xmlUrl="https://www.gamespot.com/feeds/mashup/" type="rss"/>
-      <outline text="IGN" title="IGN" description="Latest articles from IGN" xmlUrl="http://feeds.ign.com/ign/all" type="rss"/>
-      <outline text="Kotaku" title="Kotaku" description="Gaming Reviews, News, Tips and More" xmlUrl="https://kotaku.com/rss" type="rss"/>
-      <outline text="Polygon" title="Polygon" description="Video games, sci-fi, fantasy, tabletop, anime, horror, books, and comics" xmlUrl="https://www.polygon.com/rss/index.xml" type="rss"/>
-      <outline text="Rock Paper Shotgun" title="Rock Paper Shotgun" description="PC gaming news, reviews, and features" xmlUrl="http://feeds.feedburner.com/RockPaperShotgun" type="rss"/>
+      
+      <outline text="Eurogamer" title="Eurogamer" description="Latest articles from Eurogamer.net" xmlUrl="https://www.eurogamer.net/?format=rss" type="rss" />
+      <outline text="GameSpot" title="GameSpot" description="GameSpot's Everything Feed" xmlUrl="https://www.gamespot.com/feeds/mashup/" type="rss" />
+      <outline text="IGN" title="IGN" description="Latest articles from IGN" xmlUrl="http://feeds.ign.com/ign/all" type="rss" />
+      <outline text="Kotaku" title="Kotaku" description="Gaming Reviews, News, Tips and More" xmlUrl="https://kotaku.com/rss" type="rss" />
+      <outline text="Polygon" title="Polygon" description="Video games, sci-fi, fantasy, tabletop, anime, horror, books, and comics" xmlUrl="https://www.polygon.com/rss/index.xml" type="rss" />
+      <outline text="Rock Paper Shotgun" title="Rock Paper Shotgun" description="PC gaming news, reviews, and features" xmlUrl="http://feeds.feedburner.com/RockPaperShotgun" type="rss" />
 
-      <!-- Indies & niche -->
-      <outline text="Indie Games Plus" title="Indie Games Plus" description="Creative, personal, passionate digital experiences" xmlUrl="https://indiegamesplus.com/feed" type="rss"/>
-      <outline text="The Escapist" title="The Escapist" description="Everything fun" xmlUrl="https://www.escapistmagazine.com/v2/feed/" type="rss"/>
+      
+      <outline text="Indie Games Plus" title="Indie Games Plus" description="Creative, personal, passionate digital experiences" xmlUrl="https://indiegamesplus.com/feed" type="rss" />
+      <outline text="The Escapist" title="The Escapist" description="Everything fun" xmlUrl="https://www.escapistmagazine.com/v2/feed/" type="rss" />
 
-      <!-- Reddit communities -->
-      <outline text="r/gaming" title="r/gaming" description="The Number One Gaming forum on the Internet" xmlUrl="https://www.reddit.com/r/gaming/.rss" type="rss"/>
-      <outline text="r/gamingnews" title="r/gamingnews" description="Trusted source for news and discussions related to games and gaming" xmlUrl="https://www.reddit.com/r/gamingnews/.rss" type="rss"/>
-    </outline>
+      
+      </outline>
 
-    <!-- ═══════════════════════════════════════════ -->
-    <!-- TECH NEWS                                     -->
-    <!-- ═══════════════════════════════════════════ -->
+    
+    
+    
     <outline text="📰 Tech News" title="Tech News">
-      <outline text="Ars Technica" title="Ars Technica" description="News and reviews covering IT, AI, science, space, gaming, cybersecurity, tech policy" xmlUrl="https://feeds.arstechnica.com/arstechnica/index" type="rss"/>
-      <outline text="The Verge" title="The Verge" description="Technology and how it makes us feel" xmlUrl="https://www.theverge.com/rss/index.xml" type="rss"/>
-      <outline text="Wired" title="Wired" description="Wired Top Stories" xmlUrl="https://www.wired.com/feed/rss" type="rss"/>
+      <outline text="Ars Technica" title="Ars Technica" description="News and reviews covering IT, AI, science, space, gaming, cybersecurity, tech policy" xmlUrl="https://feeds.arstechnica.com/arstechnica/index" type="rss" />
+      <outline text="The Verge" title="The Verge" description="Technology and how it makes us feel" xmlUrl="https://www.theverge.com/rss/index.xml" type="rss" />
+      <outline text="Wired" title="Wired" description="Wired Top Stories" xmlUrl="https://www.wired.com/feed/rss" type="rss" />
     </outline>
 
-    <!-- ═══════════════════════════════════════════ -->
-    <!-- SOFTWARE DEVELOPMENT                          -->
-    <!-- ═══════════════════════════════════════════ -->
+    
+    
+    
     <outline text="💻 Software Development" title="Software Development">
-      <!-- Hacker News -->
-      <outline text="HN Best (daily)" title="HN Best" description="Hacker News best posts via hnrss" xmlUrl="https://hnrss.org/best" type="rss"/>
+      
+      <outline text="HN Best (daily)" title="HN Best" description="Hacker News best posts via hnrss" xmlUrl="https://hnrss.org/best" type="rss" />
 
-      <!-- Blogs -->
-      <outline text="Coding Horror" title="Coding Horror" description="Jeff Atwood on programming and human factors" xmlUrl="https://feeds.feedburner.com/codinghorror" type="rss"/>
-      <outline text="Martin Fowler" title="Martin Fowler" description="Master feed from martinfowler.com" xmlUrl="https://martinfowler.com/feed.atom" type="rss"/>
-      <outline text="Simon Willison" title="Simon Willison" description="Simon Willison's blog — LLMs, open source, data journalism" xmlUrl="https://simonwillison.net/atom/everything/" type="rss"/>
-      <outline text="Mark Nottingham" title="Mark Nottingham" description="Internet standards, HTTP, caching" xmlUrl="https://www.mnot.net/blog/feed/" type="rss"/>
+      
+      <outline text="Coding Horror" title="Coding Horror" description="Jeff Atwood on programming and human factors" xmlUrl="https://feeds.feedburner.com/codinghorror" type="rss" />
+      <outline text="Martin Fowler" title="Martin Fowler" description="Master feed from martinfowler.com" xmlUrl="https://martinfowler.com/feed.atom" type="rss" />
+      <outline text="Simon Willison" title="Simon Willison" description="Simon Willison's blog — LLMs, open source, data journalism" xmlUrl="https://simonwillison.net/atom/everything/" type="rss" />
+      <outline text="Mark Nottingham" title="Mark Nottingham" description="Internet standards, HTTP, caching" xmlUrl="https://www.mnot.net/blog/feed/" type="rss" />
 
-      <!-- Reddit -->
-      <outline text="r/programming" title="r/programming" description="Computer Programming" xmlUrl="https://www.reddit.com/r/programming/.rss" type="rss"/>
-    </outline>
+      
+      </outline>
 
-    <!-- ═══════════════════════════════════════════ -->
-    <!-- AI & ML                                       -->
-    <!-- ═══════════════════════════════════════════ -->
+    
+    
+    
     <outline text="🤖 AI &amp; ML" title="AI &amp; ML">
-      <outline text="Latent Space" title="Latent Space" description="The AI engineer's newsletter — LLMs, agents, infra" xmlUrl="https://www.latent.space/feed" type="rss"/>
-      <outline text="Lilian Weng" title="Lilian Weng" description="Lilian Weng's blog — LLMs, RL, safety (OpenAI)" xmlUrl="https://lilianweng.github.io/index.xml" type="rss"/>
-      <outline text="One Useful Thing" title="One Useful Thing" description="Ethan Mollick on AI and work" xmlUrl="https://www.oneusefulthing.org/feed" type="rss"/>
-      <outline text="Import AI" title="Import AI" description="Jack Clark's weekly AI newsletter" xmlUrl="https://importai.substack.com/feed" type="rss"/>
-      <outline text="Interconnects" title="Interconnects" description="Nathan Lambert on AI policy and research" xmlUrl="https://www.interconnects.ai/feed" type="rss"/>
-      <outline text="Ahead of AI" title="Ahead of AI" description="Sebastian Raschka on AI/ML" xmlUrl="https://magazine.sebastianraschka.com/feed" type="rss"/>
+      <outline text="Latent Space" title="Latent Space" description="The AI engineer's newsletter — LLMs, agents, infra" xmlUrl="https://www.latent.space/feed" type="rss" />
+      <outline text="Lilian Weng" title="Lilian Weng" description="Lilian Weng's blog — LLMs, RL, safety (OpenAI)" xmlUrl="https://lilianweng.github.io/index.xml" type="rss" />
+      <outline text="One Useful Thing" title="One Useful Thing" description="Ethan Mollick on AI and work" xmlUrl="https://www.oneusefulthing.org/feed" type="rss" />
+      <outline text="Import AI" title="Import AI" description="Jack Clark's weekly AI newsletter" xmlUrl="https://importai.substack.com/feed" type="rss" />
+      <outline text="Interconnects" title="Interconnects" description="Nathan Lambert on AI policy and research" xmlUrl="https://www.interconnects.ai/feed" type="rss" />
+      <outline text="Ahead of AI" title="Ahead of AI" description="Sebastian Raschka on AI/ML" xmlUrl="https://magazine.sebastianraschka.com/feed" type="rss" />
     </outline>
 
-    <!-- ═══════════════════════════════════════════ -->
-    <!-- VENDOR &amp; PLATFORM NEWS                       -->
-    <!-- ═══════════════════════════════════════════ -->
+    
+    
+    
     <outline text="🏢 Vendor &amp; Platform News" title="Vendor &amp; Platform News">
-      <outline text="NVIDIA Newsroom" title="NVIDIA Newsroom" description="Official NVIDIA news and press releases" xmlUrl="https://nvidianews.nvidia.com/rss" type="rss"/>
-      <outline text="Google Developers Blog" title="Google Developers Blog" description="Updates from the Google Developers team" xmlUrl="http://feeds.feedburner.com/GDBcode" type="rss"/>
-      <outline text="GitHub Blog" title="GitHub Blog" description="Updates, ideas, and inspiration from GitHub" xmlUrl="https://github.blog/feed/" type="rss"/>
-      <outline text="JetBrains Blog" title="JetBrains Blog" description="Developer tools for professionals and teams" xmlUrl="https://blog.jetbrains.com/feed" type="rss"/>
-      <outline text="Stack Overflow Blog" title="Stack Overflow Blog" description="Essays, opinions, and advice on programming" xmlUrl="https://stackoverflow.blog/feed/" type="rss"/>
-      <outline text="InfoQ" title="InfoQ" description="Software development news, trends, and practices" xmlUrl="https://feed.infoq.com" type="rss"/>
-      <outline text="Engineering at Meta" title="Engineering at Meta" description="Engineering at Meta Blog" xmlUrl="https://engineering.fb.com/feed/" type="rss"/>
-      <outline text="Spotify Engineering" title="Spotify Engineering" description="Spotify's official technology blog" xmlUrl="https://labs.spotify.com/feed/" type="rss"/>
+      <outline text="NVIDIA Newsroom" title="NVIDIA Newsroom" description="Official NVIDIA news and press releases" xmlUrl="https://nvidianews.nvidia.com/rss" type="rss" />
+      <outline text="Google Developers Blog" title="Google Developers Blog" description="Updates from the Google Developers team" xmlUrl="http://feeds.feedburner.com/GDBcode" type="rss" />
+      <outline text="GitHub Blog" title="GitHub Blog" description="Updates, ideas, and inspiration from GitHub" xmlUrl="https://github.blog/feed/" type="rss" />
+      <outline text="JetBrains Blog" title="JetBrains Blog" description="Developer tools for professionals and teams" xmlUrl="https://blog.jetbrains.com/feed" type="rss" />
+      <outline text="Stack Overflow Blog" title="Stack Overflow Blog" description="Essays, opinions, and advice on programming" xmlUrl="https://stackoverflow.blog/feed/" type="rss" />
+      <outline text="InfoQ" title="InfoQ" description="Software development news, trends, and practices" xmlUrl="https://feed.infoq.com" type="rss" />
+      <outline text="Engineering at Meta" title="Engineering at Meta" description="Engineering at Meta Blog" xmlUrl="https://engineering.fb.com/feed/" type="rss" />
+      <outline text="Spotify Engineering" title="Spotify Engineering" description="Spotify's official technology blog" xmlUrl="https://labs.spotify.com/feed/" type="rss" />
     </outline>
 
-    <!-- ═══════════════════════════════════════════ -->
-    <!-- LIGHT NEWS                                    -->
-    <!-- ═══════════════════════════════════════════ -->
+    
+    
+    
     <outline text="📋 Light News" title="Light News">
-      <outline text="BBC News" title="BBC News" description="BBC News — World" xmlUrl="http://feeds.bbci.co.uk/news/world/rss.xml" type="rss"/>
-      <outline text="The Guardian" title="The Guardian" description="The Guardian — World News" xmlUrl="https://www.theguardian.com/world/rss" type="rss"/>
+      <outline text="BBC News" title="BBC News" description="BBC News — World" xmlUrl="http://feeds.bbci.co.uk/news/world/rss.xml" type="rss" />
+      <outline text="The Guardian" title="The Guardian" description="The Guardian — World News" xmlUrl="https://www.theguardian.com/world/rss" type="rss" />
     </outline>
 
-    <!-- ═══════════════════════════════════════════ -->
-    <!-- SCIENCE                                       -->
-    <!-- ═══════════════════════════════════════════ -->
+    
+    
+    
     <outline text="🔬 Science" title="Science">
-      <outline text="Scientific American" title="Scientific American" description="Essential guide to awe-inspiring advances in science and technology" xmlUrl="http://rss.sciam.com/ScientificAmerican-Global" type="rss"/>
-      <outline text="Popular Science" title="Popular Science" description="Awe-inspiring science reporting, technology news, and DIY" xmlUrl="https://www.popsci.com/arcio/rss/" type="rss"/>
+      <outline text="Scientific American" title="Scientific American" description="Essential guide to awe-inspiring advances in science and technology" xmlUrl="http://rss.sciam.com/ScientificAmerican-Global" type="rss" />
+      <outline text="Popular Science" title="Popular Science" description="Awe-inspiring science reporting, technology news, and DIY" xmlUrl="https://www.popsci.com/arcio/rss/" type="rss" />
     </outline>
 
   </body>

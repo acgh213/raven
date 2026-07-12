@@ -5,10 +5,13 @@ package extractor
 import (
 	"bytes"
 	"net/url"
+	"regexp"
 	"strings"
 
 	readability "codeberg.org/readeck/go-readability/v2"
 )
+
+var htmlTagRE = regexp.MustCompile(`<[^>]*>`)
 
 // Result holds the output of an extraction run.
 type Result struct {
@@ -36,6 +39,11 @@ func Extract(rawHTML []byte) (Result, error) {
 	}
 
 	text := strings.TrimSpace(buf.String())
+
+	// Strip any residual inline HTML tags that go-readability may have left.
+	text = htmlTagRE.ReplaceAllString(text, "")
+	text = strings.TrimSpace(text)
+
 	title := strings.TrimSpace(article.Title())
 
 	words := 0

@@ -35,19 +35,20 @@ type ArticleListParams struct {
 
 // ArticleSummary is a lightweight article view for the river endpoint.
 type ArticleSummary struct {
-	ID           string `json:"id"`
-	FeedID       string `json:"feed_id"`
-	GUID         string `json:"guid"`
-	URL          string `json:"url"`
-	Title        string `json:"title"`
-	Author       string `json:"author"`
-	PublishedAt  string `json:"published_at"`
-	Excerpt      string `json:"excerpt"`
-	IsRead       bool   `json:"is_read"`
-	IsStarred    bool   `json:"is_starred"`
-	WordCount    int    `json:"word_count"`
-	LeadImageURL string `json:"lead_image_url"`
-	CreatedAt    string `json:"created_at"`
+	ID            string `json:"id"`
+	FeedID        string `json:"feed_id"`
+	GUID          string `json:"guid"`
+	URL           string `json:"url"`
+	Title         string `json:"title"`
+	Author        string `json:"author"`
+	PublishedAt   string `json:"published_at"`
+	Excerpt       string `json:"excerpt"`
+	ExtractedText string `json:"extracted_text"`
+	IsRead        bool   `json:"is_read"`
+	IsStarred     bool   `json:"is_starred"`
+	WordCount     int    `json:"word_count"`
+	LeadImageURL  string `json:"lead_image_url"`
+	CreatedAt     string `json:"created_at"`
 }
 
 // ArticleListResult is the output of ListArticles.

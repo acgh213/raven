@@ -76,8 +76,8 @@ func handleGetArticle(svc ArticleService) http.HandlerFunc {
 			return
 		}
 
-		// Path: /v1/articles/{id}
-		id := strings.TrimPrefix(r.URL.Path, "/")
+		// Path: /articles/{id}
+		id := strings.TrimPrefix(r.URL.Path, "/articles/")
 		if id == "" {
 			writeAPIError(w, r, http.StatusBadRequest, "missing_id", "article ID is required", false)
 			return
