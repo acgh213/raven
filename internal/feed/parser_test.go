@@ -60,6 +60,16 @@ func TestParseOPMLRejectsNonOPMLDocument(t *testing.T) {
 	}
 }
 
+func TestParseOPMLRejectsElementsAfterRoot(t *testing.T) {
+	_, err := ParseOPML([]byte(`<opml><body></body></opml><outline xmlUrl="https://example.com/feed.xml"/>`))
+	if err == nil {
+		t.Fatal("ParseOPML() error = nil, want malformed multi-root document error")
+	}
+	if !strings.Contains(err.Error(), "after OPML root") {
+		t.Errorf("ParseOPML() error = %q, want after OPML root error", err)
+	}
+}
+
 func TestRavenStarterOPMLParsesAllCuratedFeeds(t *testing.T) {
 	input, err := os.ReadFile("../../testdata/opml/raven-feeds.opml")
 	if err != nil {

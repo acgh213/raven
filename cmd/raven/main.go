@@ -52,6 +52,7 @@ func main() {
 	// Build the worker.
 	clock := model.RealClock{}
 	jobStore := store.NewJobStore(database, clock)
+	feedStore := store.NewFeedStore(database, clock)
 
 	// Empty handler map until feed jobs are added. Unknown persisted jobs
 	// will be failed visibly with a descriptive error by the worker.
@@ -59,7 +60,10 @@ func main() {
 	worker := jobs.NewWorker(jobStore, handlers, 1)
 
 	// HTTP server.
-	handler := app.New()
+	handler := app.New(app.Config{
+		APIToken:    cfg.APIToken,
+		FeedImports: feedStore,
+	})
 	srv := &http.Server{
 		Addr:         cfg.Addr,
 		Handler:      handler,
