@@ -268,3 +268,155 @@ func TestUpdateContentVersionMarksFailed(t *testing.T) {
 		t.Errorf("status = %q, want failed", status)
 	}
 }
+
+func TestListArticlesPaginatesByPublishedAt(t *testing.T) {
+	database := openDB(t)
+	clock := &fixedClock{t: time.Date(2026, 7, 11, 19, 0, 0, 0, time.UTC)}
+	feeds := NewFeedStore(database, clock)
+	articles := NewArticleStore(database, clock)
+
+	importResult, err := feeds.Import(context.Background(), []model.FeedCandidate{
+		{URL: "https://example.com/feed.xml", Title: "Example"},
+	})
+	if err != nil {
+		t.Fatalf("seed Import(): %v", err)
+	}
+	feedID := importResult.Created[0].ID
+
+	// Insert articles with different published_at times.
+	_, err = articles.UpsertArticles(context.Background(), feedID, []model.FeedEntry{
+		{GUID: "post-1", Title: "Oldest", URL: "https://example.com/1", PublishedAt: "2026-01-01T00:00:00Z"},
+		{GUID: "post-2", Title: "Middle", URL: "https://example.com/2", PublishedAt: "2026-06-01T00:00:00Z"},
+		{GUID: "post-3", Title: "Newest", URL: "https://example.com/3", PublishedAt: "2026-07-01T00:00:00Z"},
+	})
+	if err != nil {
+		t.Fatalf("UpsertArticles(): %v", err)
+	}
+
+	result, err := articles.ListArticles(context.Background(), model.ArticleListParams{Limit: 2})
+	if err != nil {
+		t.Fatalf("ListArticles(): %v", err)
+	}
+	if len(result.Articles) != 2 {
+		t.Fatalf("first page = %d, want 2", len(result.Articles))
+	}
+	// Newest first.
+	if result.Articles[0].Title != "Newest" {
+		t.Errorf("first article = %q, want Newest", result.Articles[0].Title)
+	}
+	if result.Articles[1].Title != "Middle" {
+		t.Errorf("second article = %q, want Middle", result.Articles[1].Title)
+	}
+	if result.NextCursor == "" {
+		t.Error("next_cursor should not be empty")
+	}
+
+	// Second page with cursor.
+	result2, err := articles.ListArticles(context.Background(), model.ArticleListParams{
+		Limit:  2,
+		Cursor: result.NextCursor,
+	})
+	if err != nil {
+		t.Fatalf("ListArticles() page 2: %v", err)
+	}
+	if len(result2.Articles) != 1 {
+		t.Fatalf("second page = %d, want 1", len(result2.Articles))
+	}
+	if result2.Articles[0].Title != "Oldest" {
+		t.Errorf("last article = %q, want Oldest", result2.Articles[0].Title)
+	}
+	if result2.NextCursor != "" {
+		t.Errorf("next_cursor on last page = %q, want empty", result2.NextCursor)
+	}
+}
+
+func TestListArticlesFiltersByFeed(t *testing.T) {
+	database := openDB(t)
+	clock := &fixedClock{t: time.Date(2026, 7, 11, 19, 0, 0, 0, time.UTC)}
+	feeds := NewFeedStore(database, clock)
+	articles := NewArticleStore(database, clock)
+
+	r1, _ := feeds.Import(context.Background(), []model.FeedCandidate{
+		{URL: "https://one.example.com/feed.xml", Title: "One"},
+	})
+	r2, _ := feeds.Import(context.Background(), []model.FeedCandidate{
+		{URL: "https://two.example.com/feed.xml", Title: "Two"},
+	})
+	feed1 := r1.Created[0].ID
+	feed2 := r2.Created[0].ID
+
+	articles.UpsertArticles(context.Background(), feed1, []model.FeedEntry{
+		{GUID: "a1", Title: "From One", URL: "https://one.example.com/a1"},
+	})
+	articles.UpsertArticles(context.Background(), feed2, []model.FeedEntry{
+		{GUID: "b1", Title: "From Two", URL: "https://two.example.com/b1"},
+	})
+
+	result, err := articles.ListArticles(context.Background(), model.ArticleListParams{
+		FeedID: feed1,
+		Limit:  10,
+	})
+	if err != nil {
+		t.Fatalf("ListArticles(filtered): %v", err)
+	}
+	if len(result.Articles) != 1 {
+		t.Fatalf("filtered count = %d, want 1", len(result.Articles))
+	}
+	if result.Articles[0].Title != "From One" {
+		t.Errorf("filtered title = %q, want From One", result.Articles[0].Title)
+	}
+}
+
+func TestGetArticleReturnsFullDetail(t *testing.T) {
+	database := openDB(t)
+	clock := &fixedClock{t: time.Date(2026, 7, 11, 19, 0, 0, 0, time.UTC)}
+	feeds := NewFeedStore(database, clock)
+	articles := NewArticleStore(database, clock)
+
+	importResult, _ := feeds.Import(context.Background(), []model.FeedCandidate{
+		{URL: "https://example.com/feed.xml", Title: "Example"},
+	})
+	feedID := importResult.Created[0].ID
+
+	result, _ := articles.UpsertArticles(context.Background(), feedID, []model.FeedEntry{
+		{GUID: "post-1", Title: "Test Article", Author: "Alice", URL: "https://example.com/1"},
+	})
+	articleID := result.New[0].ID
+	cvID := *result.New[0].LatestContentVersionID
+
+	articles.UpdateContentVersion(context.Background(), cvID,
+		[]byte("<html>...</html>"), "Extracted body text here.", 5, "https://example.com/img.jpg",
+		"abc123", "raven-extract", "0.1.0", CVStatusCompleted,
+	)
+
+	detail, err := articles.GetArticle(context.Background(), articleID)
+	if err != nil {
+		t.Fatalf("GetArticle(): %v", err)
+	}
+	if detail.Title != "Test Article" {
+		t.Errorf("title = %q", detail.Title)
+	}
+	if detail.Author != "Alice" {
+		t.Errorf("author = %q", detail.Author)
+	}
+	if detail.ExtractedText != "Extracted body text here." {
+		t.Errorf("extracted_text = %q", detail.ExtractedText)
+	}
+	if detail.WordCount != 5 {
+		t.Errorf("word_count = %d", detail.WordCount)
+	}
+	if detail.LeadImageURL != "https://example.com/img.jpg" {
+		t.Errorf("lead_image_url = %q", detail.LeadImageURL)
+	}
+}
+
+func TestGetArticleReturnsErrNoRowsForMissing(t *testing.T) {
+	database := openDB(t)
+	clock := &fixedClock{t: time.Date(2026, 7, 11, 19, 0, 0, 0, time.UTC)}
+	articles := NewArticleStore(database, clock)
+
+	_, err := articles.GetArticle(context.Background(), "nonexistent")
+	if err == nil {
+		t.Fatal("GetArticle() should return error for missing article")
+	}
+}

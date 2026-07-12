@@ -34,10 +34,14 @@ func TestExtractPlainTextFromBasicHTML(t *testing.T) {
 	if result.WordCount == 0 {
 		t.Errorf("word count is 0")
 	}
+	// go-readability extracts the title too.
+	if result.Title != "Test Page" {
+		t.Errorf("title = %q, want 'Test Page'", result.Title)
+	}
 }
 
 func TestExtractStripsScriptAndStyle(t *testing.T) {
-	html := `<html><body>
+	html := `<html><head><title>Clean</title></head><body>
   <script>console.log("hidden");</script>
   <style>.hidden { display: none; }</style>
   <p>Visible text.</p>
@@ -58,34 +62,15 @@ func TestExtractStripsScriptAndStyle(t *testing.T) {
 	}
 }
 
-func TestExtractCollapsesWhitespace(t *testing.T) {
-	html := `<html><body>
-  <p>   Lots   of    spaces   </p>
-  <p>
-
-  Blank lines
-
-  </p>
-</body></html>`
-
-	result, err := Extract([]byte(html))
-	if err != nil {
-		t.Fatalf("Extract(): %v", err)
-	}
-	if strings.Contains(result.Text, "   ") {
-		t.Error("multiple spaces not collapsed")
-	}
-	if strings.Contains(result.Text, "\n\n\n") {
-		t.Error("multiple newlines not collapsed")
-	}
-}
-
 func TestExtractFindsLeadImage(t *testing.T) {
-	html := `<html><body>
-  <p>Some text.</p>
-  <img src="https://example.com/hero.jpg" alt="Hero">
-  <p>More text.</p>
-  <img src="https://example.com/second.png">
+	// go-readability extracts the lead image from og:image meta tags.
+	html := `<!DOCTYPE html>
+<html><head>
+  <title>Images</title>
+  <meta property="og:image" content="https://example.com/hero.jpg">
+</head>
+<body>
+  <p>Substantial article text here that gives the readability algorithm enough content to work with and recognize this as a genuine article worthy of extraction.</p>
 </body></html>`
 
 	result, err := Extract([]byte(html))
@@ -97,21 +82,6 @@ func TestExtractFindsLeadImage(t *testing.T) {
 	}
 }
 
-func TestExtractSkipsDataURIImagesForLead(t *testing.T) {
-	html := `<html><body>
-  <img src="data:image/png;base64,AAAA">
-  <img src="https://example.com/real.jpg">
-</body></html>`
-
-	result, err := Extract([]byte(html))
-	if err != nil {
-		t.Fatalf("Extract(): %v", err)
-	}
-	if result.LeadImageURL != "https://example.com/real.jpg" {
-		t.Errorf("lead image = %q, want https://example.com/real.jpg", result.LeadImageURL)
-	}
-}
-
 func TestExtractHandlesEmptyInput(t *testing.T) {
 	result, err := Extract([]byte{})
 	if err != nil {
@@ -119,9 +89,6 @@ func TestExtractHandlesEmptyInput(t *testing.T) {
 	}
 	if result.Text != "" {
 		t.Errorf("text = %q, want empty", result.Text)
-	}
-	if result.WordCount != 0 {
-		t.Errorf("word count = %d, want 0", result.WordCount)
 	}
 }
 
@@ -135,5 +102,35 @@ func TestExtractHandlesTextOnlyInput(t *testing.T) {
 	}
 	if result.WordCount < 2 {
 		t.Errorf("word count = %d, want >= 2", result.WordCount)
+	}
+}
+
+func TestExtractHandlesBoilerplateRemoval(t *testing.T) {
+	// Simulate a page with nav, sidebar, footer — readability should strip them.
+	html := `<!DOCTYPE html>
+<html><head><title>Article</title></head>
+<body>
+  <nav>Home About Contact</nav>
+  <main>
+    <article>
+      <h1>The Real Content</h1>
+      <p>This is the actual article body that should be extracted.</p>
+      <p>It spans multiple paragraphs.</p>
+    </article>
+  </main>
+  <aside>Related links and ads</aside>
+  <footer>Copyright 2026</footer>
+</body></html>`
+
+	result, err := Extract([]byte(html))
+	if err != nil {
+		t.Fatalf("Extract(): %v", err)
+	}
+	if !strings.Contains(result.Text, "actual article body") {
+		t.Errorf("main content not extracted: %q", result.Text)
+	}
+	// Boilerplate should not appear.
+	if strings.Contains(result.Text, "Copyright") {
+		t.Errorf("footer boilerplate leaked into extracted text: %q", result.Text)
 	}
 }

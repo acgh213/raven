@@ -96,6 +96,7 @@ func main() {
 	httpHandler := app.New(app.Config{
 		APIToken:    cfg.APIToken,
 		FeedImports: feedStore,
+		Articles:    articleStore,
 	})
 	srv := &http.Server{
 		Addr:         cfg.Addr,

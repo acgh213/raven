@@ -22,9 +22,15 @@ func New(configs ...Config) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handleHealthz)
 
-	if cfg.FeedImports != nil {
+	if cfg.FeedImports != nil || cfg.Articles != nil {
 		api := http.NewServeMux()
-		api.HandleFunc("/feeds/import", handleFeedImport(cfg.FeedImports))
+		if cfg.FeedImports != nil {
+			api.HandleFunc("/feeds/import", handleFeedImport(cfg.FeedImports))
+		}
+		if cfg.Articles != nil {
+			api.HandleFunc("/articles", handleListArticles(cfg.Articles))
+			api.HandleFunc("/articles/", handleGetArticle(cfg.Articles))
+		}
 		mux.Handle("/v1/", http.StripPrefix("/v1", withBearerToken(cfg.APIToken, api)))
 	}
 

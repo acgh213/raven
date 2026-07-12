@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -27,6 +29,199 @@ const (
 	CVStatusCompleted  = "completed"
 	CVStatusFailed     = "failed"
 )
+
+// cursorEntry is the wire format for cursor-based pagination.
+type cursorEntry struct {
+	P string `json:"p"` // published_at
+	I string `json:"i"` // id
+}
+
+func decodeCursor(raw string) (cursorEntry, error) {
+	if raw == "" {
+		return cursorEntry{}, nil
+	}
+	b, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return cursorEntry{}, fmt.Errorf("decode cursor: %w", err)
+	}
+	var c cursorEntry
+	if err := json.Unmarshal(b, &c); err != nil {
+		return cursorEntry{}, fmt.Errorf("decode cursor: %w", err)
+	}
+	return c, nil
+}
+
+func encodeCursor(publishedAt, id string) string {
+	b, _ := json.Marshal(cursorEntry{P: publishedAt, I: id})
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// ListArticles returns a cursor-paginated list of articles ordered by
+// published_at DESC, id DESC (newest first). An empty cursor starts from the
+// beginning. The returned NextCursor is empty when there are no more results.
+func (s *ArticleStore) ListArticles(ctx context.Context, params model.ArticleListParams) (model.ArticleListResult, error) {
+	limit := params.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+
+	cursor, err := decodeCursor(params.Cursor)
+	if err != nil {
+		return model.ArticleListResult{}, err
+	}
+
+	var rows *sql.Rows
+	if params.FeedID != "" {
+		if cursor.P == "" {
+			rows, err = s.db.QueryContext(ctx,
+				`SELECT a.id, a.feed_id, a.guid, a.url, a.title, a.author,
+				        a.published_at, a.created_at,
+				        COALESCE(s.is_read, 0), COALESCE(s.is_starred, 0),
+				        COALESCE(cv.word_count, 0), COALESCE(cv.lead_image_url, ''),
+				        COALESCE(cv.extracted_text, '')
+				 FROM articles a
+				 LEFT JOIN article_state s ON s.article_id = a.id
+				 LEFT JOIN article_content_versions cv ON cv.id = a.latest_content_version_id
+				 WHERE a.feed_id = ? AND a.is_deleted = 0
+				 ORDER BY a.published_at DESC, a.id DESC
+				 LIMIT ?`,
+				params.FeedID, limit+1,
+			)
+		} else {
+			rows, err = s.db.QueryContext(ctx,
+				`SELECT a.id, a.feed_id, a.guid, a.url, a.title, a.author,
+				        a.published_at, a.created_at,
+				        COALESCE(s.is_read, 0), COALESCE(s.is_starred, 0),
+				        COALESCE(cv.word_count, 0), COALESCE(cv.lead_image_url, ''),
+				        COALESCE(cv.extracted_text, '')
+				 FROM articles a
+				 LEFT JOIN article_state s ON s.article_id = a.id
+				 LEFT JOIN article_content_versions cv ON cv.id = a.latest_content_version_id
+				 WHERE a.feed_id = ? AND a.is_deleted = 0
+				   AND (a.published_at < ? OR (a.published_at = ? AND a.id < ?))
+				 ORDER BY a.published_at DESC, a.id DESC
+				 LIMIT ?`,
+				params.FeedID, cursor.P, cursor.P, cursor.I, limit+1,
+			)
+		}
+	} else {
+		if cursor.P == "" {
+			rows, err = s.db.QueryContext(ctx,
+				`SELECT a.id, a.feed_id, a.guid, a.url, a.title, a.author,
+				        a.published_at, a.created_at,
+				        COALESCE(s.is_read, 0), COALESCE(s.is_starred, 0),
+				        COALESCE(cv.word_count, 0), COALESCE(cv.lead_image_url, ''),
+				        COALESCE(cv.extracted_text, '')
+				 FROM articles a
+				 LEFT JOIN article_state s ON s.article_id = a.id
+				 LEFT JOIN article_content_versions cv ON cv.id = a.latest_content_version_id
+				 WHERE a.is_deleted = 0
+				 ORDER BY a.published_at DESC, a.id DESC
+				 LIMIT ?`,
+				limit+1,
+			)
+		} else {
+			rows, err = s.db.QueryContext(ctx,
+				`SELECT a.id, a.feed_id, a.guid, a.url, a.title, a.author,
+				        a.published_at, a.created_at,
+				        COALESCE(s.is_read, 0), COALESCE(s.is_starred, 0),
+				        COALESCE(cv.word_count, 0), COALESCE(cv.lead_image_url, ''),
+				        COALESCE(cv.extracted_text, '')
+				 FROM articles a
+				 LEFT JOIN article_state s ON s.article_id = a.id
+				 LEFT JOIN article_content_versions cv ON cv.id = a.latest_content_version_id
+				 WHERE a.is_deleted = 0
+				   AND (a.published_at < ? OR (a.published_at = ? AND a.id < ?))
+				 ORDER BY a.published_at DESC, a.id DESC
+				 LIMIT ?`,
+				cursor.P, cursor.P, cursor.I, limit+1,
+			)
+		}
+	}
+	if err != nil {
+		return model.ArticleListResult{}, fmt.Errorf("list articles: %w", err)
+	}
+	defer rows.Close()
+
+	var summaries []model.ArticleSummary
+	for rows.Next() {
+		var s model.ArticleSummary
+		var isRead, isStarred int
+		var extractedText string
+		if err := rows.Scan(
+			&s.ID, &s.FeedID, &s.GUID, &s.URL, &s.Title, &s.Author,
+			&s.PublishedAt, &s.CreatedAt,
+			&isRead, &isStarred,
+			&s.WordCount, &s.LeadImageURL,
+			&extractedText,
+		); err != nil {
+			return model.ArticleListResult{}, fmt.Errorf("scan article: %w", err)
+		}
+		s.IsRead = isRead == 1
+		s.IsStarred = isStarred == 1
+		if len(extractedText) > 200 {
+			s.Excerpt = extractedText[:200]
+		} else {
+			s.Excerpt = extractedText
+		}
+		summaries = append(summaries, s)
+	}
+	if err := rows.Err(); err != nil {
+		return model.ArticleListResult{}, fmt.Errorf("iterate articles: %w", err)
+	}
+
+	result := model.ArticleListResult{
+		Articles:   summaries,
+		NextCursor: "",
+	}
+
+	if len(summaries) > limit {
+		last := summaries[limit-1]
+		result.NextCursor = encodeCursor(last.PublishedAt, last.ID)
+		result.Articles = summaries[:limit]
+	}
+
+	return result, nil
+}
+
+// GetArticle returns the full article detail including extracted text from the
+// latest content version. Returns sql.ErrNoRows if the article is not found.
+func (s *ArticleStore) GetArticle(ctx context.Context, id string) (model.ArticleDetail, error) {
+	var d model.ArticleDetail
+	var isRead, isStarred int
+	var extractedText, leadImage sql.NullString
+	var wordCount sql.NullInt64
+
+	err := s.db.QueryRowContext(ctx,
+		`SELECT a.id, a.feed_id, a.guid, a.url, a.title, a.author,
+		        a.published_at, a.created_at,
+		        COALESCE(s.is_read, 0), COALESCE(s.is_starred, 0),
+		        cv.word_count, cv.lead_image_url,
+		        cv.extracted_text
+		 FROM articles a
+		 LEFT JOIN article_state s ON s.article_id = a.id
+		 LEFT JOIN article_content_versions cv ON cv.id = a.latest_content_version_id
+		 WHERE a.id = ? AND a.is_deleted = 0`,
+		id,
+	).Scan(
+		&d.ID, &d.FeedID, &d.GUID, &d.URL, &d.Title, &d.Author,
+		&d.PublishedAt, &d.CreatedAt,
+		&isRead, &isStarred,
+		&wordCount, &leadImage,
+		&extractedText,
+	)
+	if err != nil {
+		return model.ArticleDetail{}, err
+	}
+
+	d.IsRead = isRead == 1
+	d.IsStarred = isStarred == 1
+	d.WordCount = int(wordCount.Int64)
+	d.LeadImageURL = leadImage.String
+	d.ExtractedText = extractedText.String
+
+	return d, nil
+}
 
 // ListPendingForFeed returns content versions with status='pending' for articles
 // belonging to the given feed, ordered by created_at ascending.
@@ -145,7 +340,7 @@ func (s *ArticleStore) UpsertArticles(ctx context.Context, feedID string, entrie
 		articleID := generateID()
 		guid := entry.GUID
 		if guid == "" {
-			guid = entry.URL // fallback: use URL as GUID when feed omits it
+			guid = entry.URL
 		}
 		publishedAt := entry.PublishedAt
 		if publishedAt == "" {

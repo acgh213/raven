@@ -31,6 +31,7 @@ type FeedImportService interface {
 type Config struct {
 	APIToken    string
 	FeedImports FeedImportService
+	Articles    ArticleService
 }
 
 type feedImportResponse struct {
