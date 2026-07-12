@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"raven/internal/extractor"
 	"raven/internal/model"
@@ -89,6 +90,19 @@ func (h *ExtractHandler) Handle(ctx context.Context, job *model.Job) error {
 	hash := sha256.Sum256(body)
 	contentHash := hex.EncodeToString(hash[:])
 
+	// Guard against CAPTCHA / bot-wall pages replacing legitimate RSS summaries.
+	// If the extractor produced very little text and it smells like a bot wall,
+	// mark as completed but keep whatever text currently exists.
+	if result.WordCount < 20 && looksLikeBotWall(result.Text) {
+		_ = h.articles.UpdateContentVersion(
+			ctx, payload.ContentVersionID,
+			body, "", result.WordCount,
+			result.LeadImageURL, contentHash,
+			"raven-extract", "0.1.0", "completed",
+		)
+		return nil
+	}
+
 	if err := h.articles.UpdateContentVersion(
 		ctx, payload.ContentVersionID,
 		body, result.Text, result.WordCount,
@@ -99,4 +113,27 @@ func (h *ExtractHandler) Handle(ctx context.Context, job *model.Job) error {
 	}
 
 	return nil
+}
+
+// looksLikeBotWall returns true if the extracted text appears to be a
+// CAPTCHA, bot-detection, or access-denial page rather than real content.
+func looksLikeBotWall(text string) bool {
+	markers := []string{
+		"captcha", "CAPTCHA",
+		"not a bot", "not for bots",
+		"are you a human", "are you a real person",
+		"verify you are human",
+		"security check", "security verification",
+		"prove you are human",
+		"enable javascript",
+		"please enable cookies",
+		"access denied", "403 forbidden",
+		"bot detection", "bot protection",
+	}
+	for _, m := range markers {
+		if strings.Contains(text, m) {
+			return true
+		}
+	}
+	return false
 }

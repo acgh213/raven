@@ -291,12 +291,14 @@ func (s *ArticleStore) UpdateContentVersion(
 	if status == CVStatusCompleted {
 		_, err = s.db.ExecContext(ctx,
 			`UPDATE article_content_versions
-			 SET raw_html = ?, extracted_text = ?, extraction_status = ?,
+			 SET raw_html = ?,
+			     extracted_text = CASE WHEN ? != '' THEN ? ELSE extracted_text END,
+			     extraction_status = ?,
 			     extraction_engine = ?, extraction_version = ?,
 			     word_count = ?, lead_image_url = ?, content_hash = ?,
 			     created_at = created_at
 			 WHERE id = ?`,
-			string(rawHTML), extractedText, status,
+			string(rawHTML), extractedText, extractedText, status,
 			engine, version,
 			wordCount, leadImageURL, contentHash,
 			versionID,
@@ -363,13 +365,15 @@ func (s *ArticleStore) UpsertArticles(ctx context.Context, feedID string, entrie
 			continue
 		}
 
-		// Create initial content version for the new article.
+		// Create initial content version for the new article,
+		// seeded with the RSS/Atom summary so the user sees
+		// something even before full extraction completes.
 		contentVersionID := generateID()
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO article_content_versions
-			 (id, article_id, extraction_status, is_latest, created_at)
-			 VALUES (?, ?, 'pending', 1, ?)`,
-			contentVersionID, articleID, now,
+			 (id, article_id, extracted_text, extraction_status, is_latest, created_at)
+			 VALUES (?, ?, ?, 'pending', 1, ?)`,
+			contentVersionID, articleID, entry.Summary, now,
 		); err != nil {
 			return model.UpsertArticlesResult{}, fmt.Errorf("insert content version for article %q: %w", guid, err)
 		}
