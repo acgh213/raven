@@ -68,6 +68,12 @@ const jobSelectCols = `id, kind, payload, status,
 // concurrent enqueue wins the race and the schema's dedupe constraint fires,
 // the existing active job is re-queried and returned.
 func (s *JobStore) Enqueue(ctx context.Context, kind, payload, dedupeKey string) (*model.Job, error) {
+	return s.EnqueueAt(ctx, kind, payload, dedupeKey, s.nowRFC3339Nano())
+}
+
+// EnqueueAt is like Enqueue but sets scheduled_at to the given value instead
+// of the current time. This lets callers schedule future jobs.
+func (s *JobStore) EnqueueAt(ctx context.Context, kind, payload, dedupeKey, scheduledAt string) (*model.Job, error) {
 	now := s.nowRFC3339Nano()
 
 	// No dedupe key: simple insert outside a transaction.
@@ -81,15 +87,15 @@ func (s *JobStore) Enqueue(ctx context.Context, kind, payload, dedupeKey string)
 			DedupeKey:   dedupeKey,
 			RetryCount:  0,
 			MaxRetries:  3,
-			ScheduledAt: now,
+			ScheduledAt: scheduledAt,
 			CreatedAt:   now,
 			UpdatedAt:   now,
-		}
-		_, err := s.db.ExecContext(ctx,
+			}
+			_, err := s.db.ExecContext(ctx,
 			`INSERT INTO jobs (id, kind, payload, status, dedupe_key, retry_count, max_retries, scheduled_at, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, NULL, 0, 3, ?, ?, ?)`,
-			id, kind, payload, model.JobStatusPending, now, now, now,
-		)
+			id, kind, payload, model.JobStatusPending, scheduledAt, now, now,
+			)
 		if err != nil {
 			return nil, fmt.Errorf("enqueue: %w", err)
 		}
@@ -131,7 +137,7 @@ func (s *JobStore) Enqueue(ctx context.Context, kind, payload, dedupeKey string)
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO jobs (id, kind, payload, status, dedupe_key, retry_count, max_retries, scheduled_at, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, 0, 3, ?, ?, ?)`,
-		id, kind, payload, model.JobStatusPending, dedupeKey, now, now, now,
+		id, kind, payload, model.JobStatusPending, dedupeKey, scheduledAt, now, now,
 	)
 	if err != nil {
 		// If the unique index constraint was violated (race lost), re-query
@@ -161,7 +167,7 @@ func (s *JobStore) Enqueue(ctx context.Context, kind, payload, dedupeKey string)
 		DedupeKey:   dedupeKey,
 		RetryCount:  0,
 		MaxRetries:  3,
-		ScheduledAt: now,
+		ScheduledAt: scheduledAt,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}

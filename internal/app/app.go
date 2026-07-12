@@ -33,6 +33,10 @@ func New(configs ...Config) http.Handler {
 	return h
 }
 
+// SeedFn is called once on startup to enqueue initial background jobs (e.g., poll
+// all feeds that are due).
+type SeedFn func(ctx context.Context) error
+
 // handleHealthz responds with a 200 OK JSON status for GET requests only.
 // All other methods receive 404 to avoid Go ServeMux's implicit HEAD handling
 // and 405 responses for method-pattern patterns.

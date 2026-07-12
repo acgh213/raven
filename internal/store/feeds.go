@@ -129,6 +129,95 @@ func (s *FeedStore) ImportIdempotently(ctx context.Context, key, requestHash str
 	return result, false, nil
 }
 
+// defaultPollIntervalSecs is the fallback poll interval in seconds when a
+// feed row has no explicit poll_interval_seconds.
+const defaultPollIntervalSecs = 12 * 3600 // 12 hours
+
+// ListPollable returns all active feeds whose last poll is older than their
+// configured interval (or never polled). Rows with NULL poll_interval_seconds
+// use defaultPollIntervalSecs.
+func (s *FeedStore) ListPollable(ctx context.Context) ([]model.Feed, error) {
+	now := s.clk.Now().UTC().Format(time.RFC3339Nano)
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, feed_url, title, COALESCE(site_url, ''),
+		        COALESCE(etag, ''), COALESCE(last_modified, ''),
+		        COALESCE(poll_interval_seconds, ?),
+		        COALESCE(last_polled_at, ''), COALESCE(last_poll_error, ''),
+		        is_active, error_count, created_at, updated_at
+		 FROM feeds
+		 WHERE is_active = 1
+		   AND (last_polled_at IS NULL
+		        OR datetime(last_polled_at, '+' || COALESCE(poll_interval_seconds, ?) || ' seconds') < datetime(?))`,
+		defaultPollIntervalSecs, defaultPollIntervalSecs, now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list pollable: %w", err)
+	}
+	defer rows.Close()
+
+	var feeds []model.Feed
+	for rows.Next() {
+		var f model.Feed
+		var isActive int
+		if err := rows.Scan(
+			&f.ID, &f.URL, &f.Title, &f.SiteURL,
+			&f.ETag, &f.LastModified,
+			&f.PollIntervalSecs,
+			&f.LastPolledAt, &f.LastPollError,
+			&isActive, &f.ErrorCount, &f.CreatedAt, &f.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan pollable feed: %w", err)
+		}
+		f.IsActive = isActive == 1
+		feeds = append(feeds, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pollable: %w", err)
+	}
+	return feeds, nil
+}
+
+// UpdatePollResult records the outcome of a feed poll. On success (errMsg == ""),
+// error_count is reset to 0. On failure, error_count is incremented and
+// last_poll_error is stored.
+func (s *FeedStore) UpdatePollResult(ctx context.Context, feedID, etag, lastModified, errMsg string) error {
+	now := s.clk.Now().UTC().Format(time.RFC3339Nano)
+
+	var result sql.Result
+	var execErr error
+	if errMsg == "" {
+		result, execErr = s.db.ExecContext(ctx,
+			`UPDATE feeds
+			 SET last_polled_at = ?, etag = ?, last_modified = ?,
+			     last_poll_error = '', error_count = 0, updated_at = ?
+			 WHERE id = ?`,
+			now, etag, lastModified, now, feedID,
+		)
+	} else {
+		// Truncate error message to 500 chars for feed row.
+		msg := errMsg
+		if len(msg) > 500 {
+			msg = msg[:500]
+		}
+		result, execErr = s.db.ExecContext(ctx,
+			`UPDATE feeds
+			 SET last_polled_at = ?, last_poll_error = ?,
+			     error_count = error_count + 1, updated_at = ?
+			 WHERE id = ?`,
+			now, msg, now, feedID,
+		)
+	}
+	if execErr != nil {
+		return fmt.Errorf("update poll result: %w", execErr)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("update poll result: feed %q not found", feedID)
+	}
+	return nil
+}
+
 func (s *FeedStore) importTx(ctx context.Context, tx *sql.Tx, candidates []model.FeedCandidate) (model.FeedImportResult, error) {
 	result := model.FeedImportResult{}
 	now := s.clk.Now().UTC().Format(time.RFC3339Nano)

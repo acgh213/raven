@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"log/slog"
 	"net/http"
@@ -14,8 +15,11 @@ import (
 	"raven/internal/app"
 	"raven/internal/config"
 	"raven/internal/db"
+	"raven/internal/fetcher"
+	"raven/internal/handler"
 	"raven/internal/jobs"
 	"raven/internal/model"
+	"raven/internal/poller"
 	"raven/internal/store"
 )
 
@@ -49,24 +53,51 @@ func main() {
 	}
 	slog.Info("database migrated", "path", dbPath)
 
-	// Build the worker.
+	// Build stores.
 	clock := model.RealClock{}
 	jobStore := store.NewJobStore(database, clock)
 	feedStore := store.NewFeedStore(database, clock)
+	articleStore := store.NewArticleStore(database, clock)
 
-	// Empty handler map until feed jobs are added. Unknown persisted jobs
-	// will be failed visibly with a descriptive error by the worker.
-	handlers := map[string]jobs.Handler{}
+	// Build poller pipeline.
+	fetchClient := fetcher.NewClient(fetcher.DefaultPolicy())
+	p := poller.New(fetchClient, feedStore, articleStore)
+
+	// Build feed URL map for poll handler cache.
+	feeds, err := feedStore.ListPollable(ctx)
+	if err != nil {
+		slog.Warn("failed to list pollable feeds for URL cache", "error", err)
+	}
+	feedURLs := make(map[string]string, len(feeds))
+	for _, f := range feeds {
+		feedURLs[f.ID] = f.URL
+	}
+
+	// Register job handlers.
+	pollHandler := handler.NewPollHandler(p, jobStore, feedURLs)
+	handlers := map[string]jobs.Handler{
+		"poll_feed": pollHandler,
+	}
 	worker := jobs.NewWorker(jobStore, handlers, 1)
 
+	// Seed initial poll jobs for all due feeds.
+	for _, f := range feeds {
+		payload, _ := json.Marshal(handler.PollPayload{FeedID: f.ID, FeedURL: f.URL})
+		dedupeKey := "poll_feed:" + f.ID
+		if _, err := jobStore.Enqueue(ctx, "poll_feed", string(payload), dedupeKey); err != nil {
+			slog.Error("failed to seed poll job", "feed_id", f.ID, "feed_url", f.URL, "error", err)
+		}
+	}
+	slog.Info("seeded poll jobs", "count", len(feeds))
+
 	// HTTP server.
-	handler := app.New(app.Config{
+	httpHandler := app.New(app.Config{
 		APIToken:    cfg.APIToken,
 		FeedImports: feedStore,
 	})
 	srv := &http.Server{
 		Addr:         cfg.Addr,
-		Handler:      handler,
+		Handler:      httpHandler,
 		ReadTimeout:  cfg.RequestTimeout,
 		WriteTimeout: cfg.RequestTimeout,
 		IdleTimeout:  2 * cfg.RequestTimeout,
@@ -92,12 +123,8 @@ func main() {
 		stop()
 	}()
 
-	// Run a periodic worker-drain loop under the signal-cancelled context.
-	// Worker.Run drains all eligible jobs and returns. We loop with a poll
-	// interval so new jobs are picked up promptly. DrainLoop uses a
-	// context-aware select so cancellation during the wait is prompt.
+	// Run the worker drain loop.
 	slog.Info("starting worker drain loop")
-	// Keep the production interval at 5 seconds; tests inject a shorter one.
 	jobs.DrainLoop(runCtx, worker.Run, 5*time.Second)
 	slog.Info("worker loop stopped")
 
