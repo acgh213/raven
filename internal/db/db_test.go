@@ -17,12 +17,13 @@ var requiredTables = []string{
 	"activity_events",
 	"article_state",
 	"jobs",
+	"idempotency_keys",
 	"_migrations",
 }
 
 // TestFreshMigration creates a fresh database, runs Migrate, and verifies:
 //   - all named tables exist
-//   - exactly one migration record is in _migrations
+//   - exactly two migration records are in _migrations
 func TestFreshMigration(t *testing.T) {
 	t.Parallel()
 
@@ -40,18 +41,18 @@ func TestFreshMigration(t *testing.T) {
 		}
 	}
 
-	// Check exactly one migration record.
+	// Check exactly two migration records.
 	var count int
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM _migrations").Scan(&count); err != nil {
 		t.Fatalf("query _migrations count: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("expected 1 migration record, got %d", count)
+	if count != 2 {
+		t.Errorf("expected 2 migration records, got %d", count)
 	}
 }
 
 // TestReRunMigration verifies that calling Migrate a second time is a no-op:
-// it leaves exactly one migration record and does not error.
+// it leaves exactly two migration records and does not error.
 func TestReRunMigration(t *testing.T) {
 	t.Parallel()
 
@@ -69,8 +70,8 @@ func TestReRunMigration(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM _migrations").Scan(&count); err != nil {
 		t.Fatalf("query _migrations count: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("expected 1 migration record after re-run, got %d", count)
+	if count != 2 {
+		t.Errorf("expected 2 migration records after re-run, got %d", count)
 	}
 }
 

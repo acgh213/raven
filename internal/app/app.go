@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -9,10 +10,23 @@ import (
 )
 
 // New returns an http.Handler that routes requests to the appropriate
-// handlers. It applies middleware for request-ID injection.
-func New() http.Handler {
+// handlers. It applies middleware for request-ID injection. With no Config it
+// serves the small health-only handler used by early-service tests; production
+// passes its API token and concrete stores explicitly.
+func New(configs ...Config) http.Handler {
+	cfg := Config{}
+	if len(configs) > 0 {
+		cfg = configs[0]
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handleHealthz)
+
+	if cfg.FeedImports != nil {
+		api := http.NewServeMux()
+		api.HandleFunc("/feeds/import", handleFeedImport(cfg.FeedImports))
+		mux.Handle("/v1/", http.StripPrefix("/v1", withBearerToken(cfg.APIToken, api)))
+	}
 
 	var h http.Handler = mux
 	h = withRequestID(h)
@@ -43,7 +57,7 @@ func withRequestID(next http.Handler) http.Handler {
 			rid = generateID()
 		}
 		w.Header().Set("X-Request-ID", rid)
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDContextKey{}, rid)))
 	})
 }
 
